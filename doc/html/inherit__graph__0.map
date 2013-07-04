@@ -1,0 +1,9 @@
+<area shape="rect" id="node1" href="$class_g_a_s_t_m_semantic_object.html" title="Objects related to semantic artifacts of the modeled/analyzed system." alt="" coords="5,112,168,141">
+<area shape="rect" id="node3" href="$class_project.html" title="The collection of compilation units to be modelled/analyzed as a whole." alt="" coords="216,85,280,115">
+<area shape="rect" id="node5" href="$class_scope.html" title="Declaration context in which names declared must be unique." alt="" coords="217,139,279,168">
+<area shape="rect" id="node7" href="$class_aggregate_scope.html" title="The scope introduced by a aggregate type." alt="" coords="335,5,457,35">
+<area shape="rect" id="node9" href="$class_block_scope.html" title="The scope introduced by a block statement." alt="" coords="349,59,443,88">
+<area shape="rect" id="node11" href="$class_function_scope.html" title="The scope introduced by a function definition." alt="" coords="340,112,452,141">
+<area shape="rect" id="node13" href="$class_global_scope.html" title="The outermost scope, surrounding all compilation units of a project." alt="" coords="345,165,447,195">
+<area shape="rect" id="node15" href="$class_name_space_scope.html" title="The scope introduced by a namespace header." alt="" coords="328,219,464,248">
+<area shape="rect" id="node17" href="$class_program_scope.html" title="The scope introduced by a compilation unit." alt="" coords="340,272,452,301">

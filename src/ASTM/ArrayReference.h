@@ -1,0 +1,6 @@
+#ifndef _ASTM_ARRAY_REFERENCE_H_
+#define _ASTM_ARRAY_REFERENCE_H_
+
+// TODO
+
+#endif	// _ASTM_ARRAY_REFERENCE_H_

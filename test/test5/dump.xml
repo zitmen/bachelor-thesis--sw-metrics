@@ -1,0 +1,91 @@
+<?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+<?xml-stylesheet href="test.xsl" type="text/xml"?>
+<ASTM>
+    <class name="Project">
+        <member name="files">
+            <item index="0">
+                <class name="CompilationUnit">
+                    <member name="language">C++</member>
+                    <member name="srcFile">
+                        <class name="SourceFile">
+                            <member name="pathName">source.cpp</member>
+                        </class>
+                    </member>
+                    <member name="opensScope">NULL</member>
+                    <member name="fragments">
+                        <item index="0">
+                            <class name="VariableDefinition">
+                                <member name="isMutable">false</member>
+                                <member name="isRegister">false</member>
+                                <member name="linkageSpecifier"></member>
+                                <member name="storageSpecifiers">NULL</member>
+                                <member name="accessKind">NULL</member>
+                                <member name="type">
+                                    <class name="UnnamedTypeReference">
+                                        <member name="isConst">false</member>
+                                        <member name="isVolatile">false</member>
+                                        <member name="type">
+                                            <class name="Integer">
+                                                <member name="isConst">false</member>
+                                                <member name="isSigned">true</member>
+                                                <member name="isVolatile">false</member>
+                                                <member name="locationInfo">NULL</member>
+                                            </class>
+                                        </member>
+                                        <member name="locationInfo">NULL</member>
+                                    </class>
+                                </member>
+                                <member name="identifierName">
+                                    <class name="Name">
+                                        <member name="nameString">foo</member>
+                                    </class>
+                                </member>
+                                <member name="initialValue">
+                                    <class name="IntegerLiteral">
+                                        <member name="value">5</member>
+                                    </class>
+                                </member>
+                                <member name="locationInfo">NULL</member>
+                            </class>
+                        </item>
+                        <item index="1">
+                            <class name="VariableDefinition">
+                                <member name="isMutable">false</member>
+                                <member name="isRegister">false</member>
+                                <member name="linkageSpecifier"></member>
+                                <member name="storageSpecifiers">NULL</member>
+                                <member name="accessKind">NULL</member>
+                                <member name="type">
+                                    <class name="UnnamedTypeReference">
+                                        <member name="isConst">false</member>
+                                        <member name="isVolatile">false</member>
+                                        <member name="type">
+                                            <class name="Integer">
+                                                <member name="isConst">false</member>
+                                                <member name="isSigned">true</member>
+                                                <member name="isVolatile">false</member>
+                                                <member name="locationInfo">NULL</member>
+                                            </class>
+                                        </member>
+                                        <member name="locationInfo">NULL</member>
+                                    </class>
+                                </member>
+                                <member name="identifierName">
+                                    <class name="Name">
+                                        <member name="nameString">bar</member>
+                                    </class>
+                                </member>
+                                <member name="initialValue">
+                                    <class name="IntegerLiteral">
+                                        <member name="value">10</member>
+                                    </class>
+                                </member>
+                                <member name="locationInfo">NULL</member>
+                            </class>
+                        </item>
+                    </member>
+                </class>
+            </item>
+        </member>
+    </class>
+</ASTM>

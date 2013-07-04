@@ -1,0 +1,3941 @@
+%code requires
+{
+	/* these forward declarations are in cpp.tab.hpp for external use */
+	class CompilationUnit;
+	int yyParseFile(const char *file, CompilationUnit *unit);
+}
+
+%{
+#include <vector>
+#include <algorithm>
+
+#include "../../config.h"
+
+#include "../../ASTM/ASTM.h"
+#include "../../ASTM/Node.h"
+#include "ActualParsingUnit.h"
+
+/* forward declarations */
+union YYSTYPE;
+struct YYLTYPE;
+
+#define VECTYPE std::vector<GASTMObject *>
+
+#define YYLEX yylex (&yylval, &yylloc, unit)
+
+int yylex(YYSTYPE *lvalp, YYLTYPE *llocp, CompilationUnit *unit);
+static void updateBlockScope(Statement *statm, BlockScope *scope, ProgramScope *unitScope);
+static int findNodeById(const VECTYPE *vec, int id, int start_index = 0);
+static DefinitionUnit * getDeclOrDefnByName(const std::string &name, const Scope *scope);
+static VariableDeclaration * getVariableDeclaration(VECTYPE *vec, VariableDeclaration *decl = NULL);
+static VariableDefinition * getVariableDefinition(VECTYPE *vec, VariableDefinition *defn = NULL);
+static FunctionDeclaration * getFunctionDeclaration(VECTYPE *vec, FunctionDeclaration *defn = NULL);
+static FunctionDefinition * getFunctionDefinition(VECTYPE *vec, FunctionDefinition *defn = NULL);
+static FormalParameterDefinition * getFormalParameterDefinition(VECTYPE *vec, FormalParameterDefinition *defn = NULL);
+static inline void setLoc(GASTMSyntaxObject *node, SourceLocation *locFirst, SourceLocation *locLast = NULL);
+static void pdebug(int line);
+static int yyerror(CompilationUnit *unit, const char *err);
+static int yyerror(CompilationUnit *unit, const char *err, int line);
+static GASTMObject * declIdMerge(YYSTYPE rule1, YYSTYPE rule2);
+static GASTMObject * fnCallOrTypeCastMerge(YYSTYPE rule1, YYSTYPE rule2);
+static GASTMObject * declExprMerge(YYSTYPE rule1, YYSTYPE rule2);
+static GASTMObject * classIdMerge(YYSTYPE rule1, YYSTYPE rule2);
+static GASTMObject * declExprStatmMerge(YYSTYPE rule1, YYSTYPE rule2);
+
+%}
+
+%glr-parser
+%locations
+%error-verbose
+
+%lex-param { CompilationUnit *unit }
+%parse-param { CompilationUnit *unit }
+
+%union
+{
+	SourceLocation *src;
+	GASTMObject *node;
+	std::vector<GASTMObject *> *vector;
+}
+
+%token <src> CHARACTER_LITERAL
+%token <src> FLOAT_LITERAL
+%token <src> INT_LITERAL
+%token <src> STR_LITERAL
+%token <src> IDENTIFIER
+%token <src> KW_ASM
+%token <src> KW_AUTO
+%token <src> KW_BOOL
+%token <src> KW_BREAK
+%token <src> KW_CASE
+%token <src> KW_CATCH
+%token <src> KW_CHAR
+%token <src> KW_CLASS
+%token <src> KW_CONST
+%token <src> KW_CONST_CAST
+%token <src> KW_CONTINUE
+%token <src> KW_DEFAULT
+%token <src> KW_DELETE
+%token <src> KW_DO
+%token <src> KW_DOUBLE
+%token <src> KW_DYNAMIC_CAST
+%token <src> KW_ELSE
+%token <src> KW_ENUM
+%token <src> KW_EXPLICIT
+%token <src> KW_EXPORT
+%token <src> KW_EXTERN
+%token <src> KW_FALSE
+%token <src> KW_FLOAT
+%token <src> KW_FRIEND
+%token <src> KW_FOR
+%token <src> KW_GOTO
+%token <src> KW_IF
+%token <src> KW_INLINE
+%token <src> KW_INT
+%token <src> KW_LONG
+%token <src> KW_MUTABLE
+%token <src> KW_NAMESPACE
+%token <src> KW_NEW
+%token <src> KW_OPERATOR
+%token <src> KW_PRIVATE
+%token <src> KW_PROTECTED
+%token <src> KW_PUBLIC
+%token <src> KW_REGISTER
+%token <src> KW_REINTERPRET_CAST
+%token <src> KW_RETURN
+%token <src> KW_SHORT
+%token <src> KW_SIGNED
+%token <src> KW_SIZEOF
+%token <src> KW_STATIC
+%token <src> KW_STATIC_CAST
+%token <src> KW_STRUCT
+%token <src> KW_SWITCH
+%token <src> KW_TEMPLATE
+%token <src> KW_THIS
+%token <src> KW_THROW
+%token <src> KW_TRUE
+%token <src> KW_TRY
+%token <src> KW_TYPEDEF
+%token <src> KW_TYPEID
+%token <src> KW_TYPENAME
+%token <src> KW_UNION
+%token <src> KW_UNSIGNED
+%token <src> KW_USING
+%token <src> KW_VIRTUAL
+%token <src> KW_VOID
+%token <src> KW_VOLATILE
+%token <src> KW_WCHAR_T
+%token <src> KW_WHILE
+%token <src> OP_INC
+%token <src> OP_DEC
+%token <src> OP_STAR
+%token <src> OP_AMP
+%token <src> OP_TILDA
+%token <src> OP_LOG_NEG
+%token <src> OP_ARROW
+%token <src> OP_ARROW_STAR
+%token <src> OP_DIV
+%token <src> OP_MOD
+%token <src> OP_ADD
+%token <src> OP_SUB
+%token <src> OP_LSH
+%token <src> OP_RSH
+%token <src> OP_LT
+%token <src> OP_GT
+%token <src> OP_LE
+%token <src> OP_GE
+%token <src> OP_EQ
+%token <src> OP_NE
+%token <src> OP_XOR
+%token <src> OP_BIT_OR
+%token <src> OP_LOG_AND
+%token <src> OP_LOG_OR
+%token <src> OP_ASSIGN
+%token <src> OP_ASSIGN_MUL
+%token <src> OP_ASSIGN_DIV
+%token <src> OP_ASSIGN_MOD
+%token <src> OP_ASSIGN_ADD
+%token <src> OP_ASSIGN_SUB
+%token <src> OP_ASSIGN_RSH
+%token <src> OP_ASSIGN_LSH
+%token <src> OP_ASSIGN_AND
+%token <src> OP_ASSIGN_XOR
+%token <src> OP_ASSIGN_OR
+%token <src> QUESTIONMARK
+%token <src> COMMA
+%token <src> DOT
+%token <src> DOT_STAR
+%token <src> COLON_2X
+%token <src> COLON
+%token <src> SEMICOLON
+%token <src> SQ_LPAR
+%token <src> SQ_RPAR
+%token <src> LPAR
+%token <src> RPAR
+%token <src> LVINCULUM
+%token <src> RVINCULUM
+%token <src> ELIS
+
+%type <node> translation_unit
+%type <node> primary_expression
+%type <node> literal
+%type <node> boolean_literal
+%type <node> id_expression
+%type <node> unqualified_id
+%type <node> qualified_id
+%type <node> nested_name_specifier
+%type <node> class_or_namespace_name
+%type <node> postfix_expression
+%type <vector> expression_list
+%type <node> pseudo_destructor_name
+%type <node> unary_expression
+%type <node> unary_operator
+%type <node> new_expression
+%type <node> new_placement
+%type <node> new_type_id
+%type <node> new_declarator
+%type <node> direct_new_declarator
+%type <node> new_initializer
+%type <node> delete_expression
+%type <node> cast_expression
+%type <node> pm_expression
+%type <node> multiplicative_expression
+%type <node> additive_expression
+%type <node> shift_expression
+%type <node> relational_expression
+%type <node> equality_expression
+%type <node> and_expression
+%type <node> exclusive_or_expression
+%type <node> inclusive_or_expression
+%type <node> logical_and_expression
+%type <node> logical_or_expression
+%type <node> conditional_expression
+%type <node> assignment_expression
+%type <node> assignment_operator
+%type <node> expression
+%type <node> constant_expression
+%type <node> statement
+%type <node> labeled_statement
+%type <node> expression_statement
+%type <node> compound_statement
+%type <vector> statement_seq
+%type <node> selection_statement
+%type <node> condition
+%type <node> iteration_statement
+%type <node> for_init_statement
+%type <node> jump_statement
+%type <node> declaration_statement
+%type <vector> declaration_seq
+%type <vector> declaration
+%type <vector> block_declaration
+%type <vector> simple_declaration
+%type <node> decl_specifier
+%type <vector> decl_specifier_seq
+%type <node> storage_class_specifier
+%type <node> function_specifier
+%type <node> type_specifier
+%type <node> simple_type_specifier
+%type <node> type_name
+%type <node> elaborated_type_specifier
+%type <node> enum_specifier
+%type <node> enumerator_list
+%type <node> enumerator_definition
+%type <node> enumerator
+%type <node> namespace_name
+%type <node> namespace_definition
+%type <node> named_namespace_definition
+%type <node> unnamed_namespace_definition
+%type <vector> namespace_body
+%type <node> namespace_alias_definition
+%type <node> qualified_namespace_specifier
+%type <node> using_declaration
+%type <node> using_directive
+%type <node> asm_definition
+%type <node> linkage_specification
+%type <vector> init_declarator_list
+%type <node> init_declarator
+%type <node> declarator
+%type <node> direct_declarator
+%type <node> ptr_operator
+%type <node> cv_qualifier_seq
+%type <node> cv_qualifier
+%type <node> declarator_id
+%type <node> type_id
+%type <node> type_specifier_seq
+%type <node> abstract_declarator
+%type <node> direct_abstract_declarator
+%type <vector> parameter_declaration_clause
+%type <vector> parameter_declaration_list
+%type <node> parameter_declaration
+%type <node> function_definition
+%type <node> function_body
+%type <node> initializer
+%type <node> initializer_clause
+%type <node> initializer_list
+%type <node> class_name
+%type <node> class_specifier
+%type <node> class_head
+%type <node> class_key
+%type <vector> member_specification
+%type <vector> member_declaration
+%type <vector> member_declarator_list
+%type <node> member_declarator
+%type <node> constant_initializer
+%type <vector> base_clause
+%type <vector> base_specifier_list
+%type <node> base_specifier
+%type <node> access_specifier
+%type <node> conversion_function_id
+%type <node> conversion_type_id
+%type <node> conversion_declarator
+%type <node> ctor_initializer
+%type <node> mem_initializer_list
+%type <node> mem_initializer
+%type <node> mem_initializer_id
+%type <node> operator_function_id
+%type <node> overloadable_operator
+%type <node> template_declaration
+%type <node> template_parameter_list
+%type <node> template_parameter
+%type <node> type_parameter
+%type <node> template_id
+%type <node> template_name
+%type <node> template_argument_list
+%type <node> template_argument
+%type <node> explicit_instantiation
+%type <node> explicit_specialization
+%type <node> try_block
+%type <node> function_try_block
+%type <node> handler_seq
+%type <node> handler
+%type <node> exception_declaration
+%type <node> throw_expression
+%type <node> exception_specification
+%type <node> type_id_list
+
+%start translation_unit
+
+%%
+
+translation_unit
+	: 	{ pdebug(__LINE__); $$ = unit; }
+	| declaration_seq { pdebug(__LINE__); unit->fragments = (std::vector<DefinitionUnit *> *)$1; $$ = unit; }
+	;
+
+primary_expression
+	: literal	{ pdebug(__LINE__); }
+	| KW_THIS	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| LPAR expression RPAR	{ pdebug(__LINE__); $$ = $2; }
+	| id_expression	{ pdebug(__LINE__); }
+	;
+
+literal
+	: INT_LITERAL		{ pdebug(__LINE__); IntegerLiteral *node = new IntegerLiteral; node->value = $1->token; $$ = node; setLoc(node, $1); }
+	| CHARACTER_LITERAL	{ pdebug(__LINE__); CharLiteral *node = new CharLiteral; node->value = $1->token; $$ = node; setLoc(node, $1); }
+	| FLOAT_LITERAL		{ pdebug(__LINE__); RealLiteral *node = new RealLiteral; node->value = $1->token; $$ = node; setLoc(node, $1); }
+	| STR_LITERAL		{ pdebug(__LINE__); StringLiteral *node = new StringLiteral; node->value = $1->token; $$ = node; setLoc(node, $1); }
+	| boolean_literal	{ pdebug(__LINE__); }
+	;
+
+boolean_literal
+	: KW_FALSE	{ pdebug(__LINE__); BooleanLiteral *node = new BooleanLiteral; node->value = $1->token; $$ = node; setLoc(node, $1); }
+	| KW_TRUE	{ pdebug(__LINE__); BooleanLiteral *node = new BooleanLiteral; node->value = $1->token; $$ = node; setLoc(node, $1); }
+	;
+
+id_expression
+	: unqualified_id	{ pdebug(__LINE__); }
+	| qualified_id		{ pdebug(__LINE__); }
+	;
+
+unqualified_id
+	: IDENTIFIER
+		{
+			pdebug(__LINE__);
+			//
+			Name *name = new Name;
+			name->nameString = $1->token;
+			$$ = name;
+			setLoc(name, $1);
+			//
+			// is it already declared or defined?
+			DefinitionUnit *def = getDeclOrDefnByName(name->nameString, unit->opensScope);
+			if(def)
+			{
+				IdentifierReference *idRef = new IdentifierReference;
+				idRef->name = name;
+				idRef->refersTo = def;
+				$$ = idRef;
+			}
+		}
+	| operator_function_id	{ pdebug(__LINE__); }
+	| conversion_function_id	{ pdebug(__LINE__); }
+	| OP_TILDA class_name
+		{
+			pdebug(__LINE__);
+			//
+			Name *node = (Name *)$2;
+			node->nameString = $1->token + node->nameString;
+			//
+			$$ = node;
+		}
+	| template_id	{ pdebug(__LINE__); }
+	;
+
+qualified_id
+	: nested_name_specifier unqualified_id	{ pdebug(__LINE__); $$ = $1; /*QualifiedIdentifierReference *node = new QualifiedIdentifierReference; node->qualifiers = (Expression *)$1; node->member = (IdentifierReference *)$2; $$ = node;*/ }
+	| COLON_2X nested_name_specifier unqualified_id	{ pdebug(__LINE__); $$ = $2; /*QualifiedIdentifierReference *node = new QualifiedIdentifierReference; node->qualifiers = (Expression *)$2; node->member = (IdentifierReference *)$3; $$ = node;*/ }
+	| nested_name_specifier KW_TEMPLATE unqualified_id	{ pdebug(__LINE__); }
+	| COLON_2X nested_name_specifier KW_TEMPLATE unqualified_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| COLON_2X IDENTIFIER	{ pdebug(__LINE__); $$ = new IdentifierReference; }
+	| COLON_2X operator_function_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| COLON_2X template_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+nested_name_specifier
+	: class_or_namespace_name COLON_2X	{ pdebug(__LINE__); $$ = $1; }
+	| class_or_namespace_name COLON_2X nested_name_specifier	{ pdebug(__LINE__); $$ = $1; /*QualifiedIdentifierReference *node = new QualifiedIdentifierReference; node->qualifiers = (Expression *)$1; node->member = (IdentifierReference *)$3; $$ = node;*/ }
+	| class_or_namespace_name COLON_2X KW_TEMPLATE nested_name_specifier	{ pdebug(__LINE__); }
+	;
+
+class_or_namespace_name
+	: class_name	{ pdebug(__LINE__); }
+	| namespace_name	{ pdebug(__LINE__); }
+	;
+
+postfix_expression
+	: primary_expression	{ pdebug(__LINE__); }
+	| postfix_expression SQ_LPAR expression SQ_RPAR	{ pdebug(__LINE__); }
+	| postfix_expression LPAR RPAR	%merge <fnCallOrTypeCastMerge>
+		{
+			pdebug(__LINE__);
+			//
+			FunctionCallExpression *node = new FunctionCallExpression;
+			node->calledFunction = (IdentifierReference *)$1;
+			//
+			$$ = node;
+			setLoc(node, ((Name *)$1)->locFirst, $3);
+		}
+	| postfix_expression LPAR expression_list RPAR	%merge <fnCallOrTypeCastMerge>
+		{
+			pdebug(__LINE__);
+			//
+			FunctionCallExpression *node = new FunctionCallExpression;
+			node->calledFunction = (IdentifierReference *)$1;
+			node->actualParams = new std::vector<ActualParameter *>;
+			ActualParameter *param;
+			for(size_t i = 0, im = $3->size(); i < im; ++i)
+			{
+				param = new ActualParameter;
+				param->value = (Expression *)$3->at(i);
+				setLoc(param, param->value->locFirst, param->value->locLast);
+				node->actualParams->push_back(param);
+			}
+			//
+			$$ = node;
+			setLoc(node, ((Name *)$1)->locFirst, $4);
+		}
+	| simple_type_specifier LPAR RPAR	{ pdebug(__LINE__); }	%merge <fnCallOrTypeCastMerge>
+	| simple_type_specifier LPAR expression_list RPAR	{ pdebug(__LINE__); }	%merge <fnCallOrTypeCastMerge>
+	| KW_TYPENAME nested_name_specifier IDENTIFIER LPAR RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME COLON_2X nested_name_specifier IDENTIFIER LPAR RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME nested_name_specifier IDENTIFIER LPAR expression_list RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME COLON_2X nested_name_specifier IDENTIFIER LPAR expression_list RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME nested_name_specifier template_id LPAR RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME COLON_2X nested_name_specifier template_id LPAR RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME nested_name_specifier KW_TEMPLATE template_id LPAR RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME COLON_2X nested_name_specifier KW_TEMPLATE template_id LPAR RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME nested_name_specifier template_id LPAR expression_list RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME COLON_2X nested_name_specifier template_id LPAR expression_list RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME nested_name_specifier KW_TEMPLATE template_id LPAR expression_list RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME COLON_2X nested_name_specifier KW_TEMPLATE template_id LPAR expression_list RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| postfix_expression DOT id_expression
+		{
+			pdebug(__LINE__);
+			//
+			QualifiedOverData *node = new QualifiedOverData;
+			node->qualifiers = (Expression *)$1;
+			IdentifierReference *idRef = new IdentifierReference;
+			node->name = idRef->name = (Name *)$3;
+			//
+			Scope *scope = NULL;
+			DefinitionUnit *def = NULL;
+			Node helper(node->qualifiers);
+			if(helper == NodeId::IDENTIFIER_REFERENCE)
+			{
+				if((IdentifierReference *)node->qualifiers)
+					def = ((IdentifierReference *)node->qualifiers)->refersTo;
+			}
+			else if(helper == NodeId::NAME)
+			{
+				IdentifierReference *asc = new IdentifierReference;
+				asc->name = (Name *)node->qualifiers;
+				def = asc->refersTo = getDeclOrDefnByName(asc->name->nameString, unit->opensScope);
+				node->qualifiers = asc;
+			}
+			else
+			{
+				yyerror(unit, "Error: Unrecognized identifier in scoped expression!");
+				YYABORT;
+			}
+			if(def)
+			{
+				helper.setNode(def);
+				if(helper == NodeId::AGGREGATE_TYPE_DEFINITION)
+				{
+					scope = ((AggregateTypeDefinition *)def)->aggregateType->opensScope;
+				}
+				else if((helper == NodeId::VARIABLE_DECLARATION) || (helper == NodeId::VARIABLE_DEFINITION))
+				{
+					helper.setNode(((Declaration *)def)->type);
+					if(helper == NodeId::NAMED_TYPE_REFERENCE)
+					{
+						def = ((NamedTypeReference *)((Declaration *)def)->type)->aType;
+						if(def)
+						{
+							if(((AggregateTypeDefinition *)def)->aggregateType)
+								scope = ((AggregateTypeDefinition *)def)->aggregateType->opensScope;
+						}
+					}
+					else
+					{
+						yyerror(unit, "Error: Unrecognized identifier in scoped expression!");
+						YYABORT;
+					}
+				}
+				else
+				{
+					yyerror(unit, "Error: Unrecognized identifier in scoped expression!");
+					YYABORT;
+				}
+			}
+			else
+			{
+				yyerror(unit, "Error: Unrecognized identifier in scoped expression!");
+				YYABORT;
+			}
+			idRef->refersTo = getDeclOrDefnByName(node->name->nameString, scope);
+			node->member = idRef;
+			//
+			setLoc(node, node->qualifiers->locFirst, idRef->name->locLast);
+			$$ = node;
+		}
+	| postfix_expression DOT KW_TEMPLATE id_expression	{ pdebug(__LINE__); }
+	| postfix_expression OP_ARROW id_expression
+		{
+			pdebug(__LINE__);
+			//
+			QualifiedOverPointer *node = new QualifiedOverPointer;
+			node->qualifiers = (Expression *)$1;
+			IdentifierReference *idRef = new IdentifierReference;
+			node->name = idRef->name = (Name *)$3;
+			//
+			Scope *scope = NULL;
+			DefinitionUnit *def = NULL;
+			Node helper(node->qualifiers);
+			if(helper == NodeId::IDENTIFIER_REFERENCE)
+			{
+				def = ((IdentifierReference *)node->qualifiers)->refersTo;
+			}
+			else if(helper == NodeId::NAME)
+			{
+				IdentifierReference *asc = new IdentifierReference;
+				asc->name = (Name *)node->qualifiers;
+				def = asc->refersTo = getDeclOrDefnByName(asc->name->nameString, unit->opensScope);
+				node->qualifiers = asc;
+			}
+			else
+			{
+				yyerror(unit, "Error: Unrecognized identifier in scoped expression!");
+				YYABORT;
+			}
+			helper.setNode(def);
+			if(helper == NodeId::AGGREGATE_TYPE_DEFINITION)
+			{
+				scope = ((AggregateTypeDefinition *)def)->aggregateType->opensScope;
+			}
+			else if((helper == NodeId::VARIABLE_DECLARATION) || (helper == NodeId::VARIABLE_DEFINITION))
+			{
+				helper.setNode(((Declaration *)def)->type);
+				if(helper == NodeId::UNNAMED_TYPE_REFERENCE)	// pointer is always unnamed
+				{
+					UnnamedTypeReference *utr = (UnnamedTypeReference *)((Declaration *)def)->type;
+					helper.setNode(((PointerType *)utr->type)->baseType);
+					if(helper == NodeId::NAMED_TYPE_REFERENCE)	// base type should be named aggregated type
+					{
+						def = ((NamedTypeReference *)((PointerType *)utr->type)->baseType)->aType;
+						scope = ((AggregateTypeDefinition *)def)->aggregateType->opensScope;
+					}
+				}
+				else
+				{
+					yyerror(unit, "Error: Unrecognized identifier in scoped expression!");
+					YYABORT;
+				}
+			}
+			else
+			{
+				yyerror(unit, "Error: Unrecognized identifier in scoped expression!");
+				YYABORT;
+			}
+			idRef->refersTo = getDeclOrDefnByName(node->name->nameString, scope);
+			node->member = idRef;
+			//
+			setLoc(node, node->qualifiers->locFirst, idRef->name->locLast);
+			$$ = node;
+		}
+	| postfix_expression OP_ARROW KW_TEMPLATE id_expression	{ pdebug(__LINE__); }
+	| postfix_expression DOT pseudo_destructor_name	{ pdebug(__LINE__); }
+	| postfix_expression OP_ARROW pseudo_destructor_name	{ pdebug(__LINE__); }
+	| postfix_expression OP_INC	{ pdebug(__LINE__); UnaryExpression *node = new UnaryExpression; node->operand = (Expression *)$1; node->op = new PostIncrement; $$ = node; }
+	| postfix_expression OP_DEC	{ pdebug(__LINE__); UnaryExpression *node = new UnaryExpression; node->operand = (Expression *)$1; node->op = new PostDecrement; $$ = node; }
+	| KW_DYNAMIC_CAST OP_LT type_id OP_GT LPAR expression RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_STATIC_CAST OP_LT type_id OP_GT LPAR expression RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_REINTERPRET_CAST OP_LT type_id OP_GT LPAR expression RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_CONST_CAST OP_LT type_id OP_GT LPAR expression RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPEID LPAR expression RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPEID LPAR type_id RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+expression_list
+	: assignment_expression	{ pdebug(__LINE__); $$ = new VECTYPE; $$->push_back($1) }
+	| expression_list COMMA assignment_expression	{ pdebug(__LINE__); $1->push_back($3); $$ = $1; }
+	;
+
+pseudo_destructor_name
+	: type_name COLON_2X OP_TILDA type_name	{ pdebug(__LINE__); }
+	| COLON_2X type_name COLON_2X OP_TILDA type_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| nested_name_specifier type_name COLON_2X OP_TILDA type_name	{ pdebug(__LINE__); }
+	| COLON_2X nested_name_specifier type_name COLON_2X OP_TILDA type_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| nested_name_specifier KW_TEMPLATE template_id COLON_2X OP_TILDA type_name	{ pdebug(__LINE__); }
+	| COLON_2X nested_name_specifier KW_TEMPLATE template_id COLON_2X OP_TILDA type_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_TILDA type_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| COLON_2X OP_TILDA type_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| nested_name_specifier OP_TILDA type_name	{ pdebug(__LINE__); }
+	| COLON_2X nested_name_specifier OP_TILDA type_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+unary_expression
+	: postfix_expression	{ pdebug(__LINE__); }
+	| OP_INC cast_expression			{ pdebug(__LINE__); UnaryExpression *node = new UnaryExpression; node->op = new Increment; node->operand = (Expression *)$2; $$ = node; }
+	| OP_DEC cast_expression			{ pdebug(__LINE__); UnaryExpression *node = new UnaryExpression; node->op = new Decrement; node->operand = (Expression *)$2; $$ = node; }
+	| unary_operator cast_expression
+		{
+			pdebug(__LINE__);
+			//
+			// TODO: if op == AMD --> reference, STAR --> pointer
+			//
+			UnaryExpression *node = new UnaryExpression;
+			node->op = (UnaryOperator *)$1;
+			node->operand = (Expression *)$2;
+			//
+			$$ = node;
+		}
+	| KW_SIZEOF unary_expression	%dprec 1 { pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_SIZEOF LPAR type_id RPAR	%dprec 2 { pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| new_expression	{ pdebug(__LINE__); }
+	| delete_expression	{ pdebug(__LINE__); }
+	;
+
+unary_operator
+	: OP_STAR		{ pdebug(__LINE__); $$ = new Deref; }
+	| OP_AMP		{ pdebug(__LINE__); $$ = new AddressOf; }
+	| OP_ADD		{ pdebug(__LINE__); $$ = new UnaryPlus; }
+	| OP_SUB		{ pdebug(__LINE__); $$ = new UnaryMinus; }
+	| OP_LOG_NEG	{ pdebug(__LINE__); $$ = new Not; }
+	| OP_TILDA		{ pdebug(__LINE__); $$ = new BitNot; }
+	;
+
+new_expression
+	: KW_NEW new_type_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| COLON_2X KW_NEW new_type_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_NEW new_placement new_type_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| COLON_2X KW_NEW new_placement new_type_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_NEW new_type_id new_initializer	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| COLON_2X KW_NEW new_type_id new_initializer	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_NEW new_placement new_type_id new_initializer	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| COLON_2X KW_NEW new_placement new_type_id new_initializer	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_NEW LPAR type_id RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| COLON_2X KW_NEW LPAR type_id RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_NEW new_placement LPAR type_id RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| COLON_2X KW_NEW new_placement LPAR type_id RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_NEW LPAR type_id RPAR new_initializer	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| COLON_2X KW_NEW LPAR type_id RPAR new_initializer	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_NEW new_placement LPAR type_id RPAR new_initializer	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| COLON_2X KW_NEW new_placement LPAR type_id RPAR new_initializer	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+new_placement
+	: LPAR expression_list RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+new_type_id
+	: type_specifier_seq	{ pdebug(__LINE__); }
+	| type_specifier_seq new_declarator { pdebug(__LINE__); }
+	;
+
+new_declarator
+	: ptr_operator	{ pdebug(__LINE__); }
+	| ptr_operator new_declarator	{ pdebug(__LINE__); }
+	| direct_new_declarator	{ pdebug(__LINE__); }
+	;
+
+direct_new_declarator
+	: SQ_LPAR expression SQ_RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| direct_new_declarator SQ_LPAR constant_expression SQ_RPAR	{ pdebug(__LINE__); }
+	;
+
+new_initializer
+	: LPAR RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| LPAR expression_list RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+delete_expression
+	: KW_DELETE cast_expression	{ pdebug(__LINE__); DeleteStatement *node = new DeleteStatement; node->operand = (Expression *)$1; $$ = node; }
+	| COLON_2X KW_DELETE cast_expression	{ pdebug(__LINE__); DeleteStatement *node = new DeleteStatement; node->operand = (Expression *)$1; $$ = node; }
+	| KW_DELETE SQ_LPAR SQ_RPAR cast_expression	{ pdebug(__LINE__); DeleteStatement *node = new DeleteStatement; node->deleteArray = true; node->operand = (Expression *)$1; $$ = node; }
+	| COLON_2X KW_DELETE SQ_LPAR SQ_RPAR cast_expression	{ pdebug(__LINE__); DeleteStatement *node = new DeleteStatement; node->deleteArray = true; node->operand = (Expression *)$1; $$ = node; }
+	;
+
+cast_expression
+	: unary_expression	{ pdebug(__LINE__); }
+	| LPAR type_id RPAR cast_expression	{ pdebug(__LINE__); CastExpression *node = new CastExpression; node->castType = (TypeReference *)$2; node->expression = (Expression *)$4; $$ = node; }
+	;
+
+pm_expression
+	: cast_expression
+	| pm_expression DOT_STAR cast_expression	{ pdebug(__LINE__); QualifiedOverData *node = new QualifiedOverData; node->qualifiers = (Expression *)$1; node->member = (IdentifierReference *)$3; $$ = node; }
+	| pm_expression OP_ARROW_STAR cast_expression	{ pdebug(__LINE__); QualifiedOverPointer *node = new QualifiedOverPointer; node->qualifiers = (Expression *)$1; node->member = (IdentifierReference *)$3; $$ = node; }
+	;
+
+multiplicative_expression
+	: pm_expression	{ pdebug(__LINE__); }
+	| multiplicative_expression OP_STAR pm_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new Multiply; node->rightOperand = (Expression *)$3; $$ = node; }
+	| multiplicative_expression OP_DIV pm_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new Divide; node->rightOperand = (Expression *)$3; $$ = node; }
+	| multiplicative_expression OP_MOD pm_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new Modulus; node->rightOperand = (Expression *)$3; $$ = node; }
+	;
+
+additive_expression
+	: multiplicative_expression	{ pdebug(__LINE__); }
+	| additive_expression OP_ADD multiplicative_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new Add; node->rightOperand = (Expression *)$3; $$ = node; }
+	| additive_expression OP_SUB multiplicative_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new Subtract; node->rightOperand = (Expression *)$3; $$ = node; }
+	;
+
+shift_expression
+	: additive_expression	{ pdebug(__LINE__); }
+	| shift_expression OP_LSH additive_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new BitLeftShift; node->rightOperand = (Expression *)$3; $$ = node; }
+	| shift_expression OP_RSH additive_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new BitRightShift; node->rightOperand = (Expression *)$3; $$ = node; }
+	;
+
+relational_expression
+	: shift_expression	{ pdebug(__LINE__); }
+	| relational_expression OP_LT shift_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new Less; node->rightOperand = (Expression *)$3; $$ = node; }
+	| relational_expression OP_GT shift_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new Greater; node->rightOperand = (Expression *)$3; $$ = node; }
+	| relational_expression OP_LE shift_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new NotGreater; node->rightOperand = (Expression *)$3; $$ = node; }
+	| relational_expression OP_GE shift_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new NotLess; node->rightOperand = (Expression *)$3; $$ = node; }
+	;
+
+equality_expression
+	: relational_expression	{ pdebug(__LINE__); }
+	| equality_expression OP_EQ relational_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new Equal; node->rightOperand = (Expression *)$3; $$ = node; }
+	| equality_expression OP_NE relational_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new NotEqual; node->rightOperand = (Expression *)$3; $$ = node; }
+	;
+
+and_expression
+	: equality_expression	{ pdebug(__LINE__); }
+	| and_expression OP_AMP equality_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new BitAnd; node->rightOperand = (Expression *)$3; $$ = node; }
+	;
+
+exclusive_or_expression
+	: and_expression	{ pdebug(__LINE__); }
+	| exclusive_or_expression OP_XOR and_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new BitXor; node->rightOperand = (Expression *)$3; $$ = node; }
+	;
+
+inclusive_or_expression
+	: exclusive_or_expression	{ pdebug(__LINE__); }
+	| inclusive_or_expression OP_BIT_OR exclusive_or_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new BitOr; node->rightOperand = (Expression *)$3; $$ = node; }
+	;
+
+logical_and_expression
+	: inclusive_or_expression	{ pdebug(__LINE__); }
+	| logical_and_expression OP_LOG_AND inclusive_or_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new And; node->rightOperand = (Expression *)$3; $$ = node; }
+	;
+
+logical_or_expression
+	: logical_and_expression	{ pdebug(__LINE__); }
+	| logical_or_expression OP_LOG_OR logical_and_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = new Or; node->rightOperand = (Expression *)$3; $$ = node; }
+	;
+
+conditional_expression
+	: logical_or_expression	{ pdebug(__LINE__); }
+	| logical_or_expression QUESTIONMARK expression COLON assignment_expression	{ pdebug(__LINE__); ConditionalExpression *node = new ConditionalExpression; node->condition = (Expression *)$1; node->onTrueOperand = (Expression *)$3; node->onFalseOperand = (Expression *)$5; $$ = node; }
+	;
+
+assignment_expression
+	: conditional_expression	{ pdebug(__LINE__); }
+	| logical_or_expression assignment_operator assignment_expression	{ pdebug(__LINE__); BinaryExpression *node = new BinaryExpression; node->leftOperand = (Expression *)$1; node->op = (BinaryOperator *)$2; node->rightOperand = (Expression *)$3; $$ = node; }
+	| throw_expression	{ pdebug(__LINE__); }
+	;
+
+assignment_operator
+	: OP_ASSIGN		{ pdebug(__LINE__); $$ = new Assign; }
+	| OP_ASSIGN_MUL	{ pdebug(__LINE__); OperatorAssign *node = new OperatorAssign; node->op = new Multiply; $$ = node; }
+	| OP_ASSIGN_DIV	{ pdebug(__LINE__); OperatorAssign *node = new OperatorAssign; node->op = new Divide; $$ = node; }
+	| OP_ASSIGN_MOD	{ pdebug(__LINE__); OperatorAssign *node = new OperatorAssign; node->op = new Modulus; $$ = node; }
+	| OP_ASSIGN_ADD	{ pdebug(__LINE__); OperatorAssign *node = new OperatorAssign; node->op = new Add; $$ = node; }
+	| OP_ASSIGN_SUB	{ pdebug(__LINE__); OperatorAssign *node = new OperatorAssign; node->op = new Subtract; $$ = node; }
+	| OP_ASSIGN_RSH	{ pdebug(__LINE__); OperatorAssign *node = new OperatorAssign; node->op = new BitRightShift; $$ = node; }
+	| OP_ASSIGN_LSH	{ pdebug(__LINE__); OperatorAssign *node = new OperatorAssign; node->op = new BitLeftShift; $$ = node; }
+	| OP_ASSIGN_AND	{ pdebug(__LINE__); OperatorAssign *node = new OperatorAssign; node->op = new BitAnd; $$ = node; }
+	| OP_ASSIGN_XOR	{ pdebug(__LINE__); OperatorAssign *node = new OperatorAssign; node->op = new BitXor; $$ = node; }
+	| OP_ASSIGN_OR	{ pdebug(__LINE__); OperatorAssign *node = new OperatorAssign; node->op = new BitOr; $$ = node; }
+	;
+
+expression
+	: assignment_expression	{ pdebug(__LINE__); }
+	| expression COMMA assignment_expression { pdebug(__LINE__); AggregateExpression *node = new AggregateExpression; node->expressions.push_back((Expression *)$1); node->expressions.push_back((Expression *)$2); $$ = node; }
+	;
+
+constant_expression
+	: conditional_expression	{ pdebug(__LINE__); }
+	;
+
+statement
+	: labeled_statement		{ pdebug(__LINE__); }
+	| expression_statement	{ pdebug(__LINE__); }	%merge <declExprStatmMerge>
+	| compound_statement	{ pdebug(__LINE__); }
+	| selection_statement	{ pdebug(__LINE__); }
+	| iteration_statement	{ pdebug(__LINE__); }
+	| jump_statement		{ pdebug(__LINE__); }
+	| declaration_statement	{ pdebug(__LINE__); }	%merge <declExprStatmMerge>
+	| try_block				{ pdebug(__LINE__); }
+	;
+
+labeled_statement
+	: IDENTIFIER COLON statement					{ pdebug(__LINE__); LabeledStatement *node = new LabeledStatement; node->label = new LabelDefinition; node->label->labelName = new Name; node->label->labelName->nameString = $1->token; node->statement = (Statement *)$3; $$ = node; setLoc(node, $1, ((GASTMSyntaxObject *)$3)->locLast); }
+	| KW_CASE constant_expression COLON statement	{ pdebug(__LINE__); CaseBlock *node = new CaseBlock; node->expression = (Expression *)$2; node->statement = (Statement *)$4; $$ = node; setLoc(node, $1, ((GASTMSyntaxObject *)$4)->locLast); }
+	| KW_DEFAULT COLON statement 					{ pdebug(__LINE__); DefaultBlock *node = new DefaultBlock; node->statement = (Statement *)$3; $$ = node; setLoc(node, $1, ((GASTMSyntaxObject *)$3)->locLast); }
+	;
+
+expression_statement
+	: SEMICOLON	{ pdebug(__LINE__); EmptyStatement *node = new EmptyStatement; $$ = node; setLoc(node, $1); }
+	| expression SEMICOLON { pdebug(__LINE__); ExpressionStatement *node = new ExpressionStatement; node->expression = (Expression *)$1; $$ = node; setLoc(node, ((GASTMSyntaxObject *)$1)->locLast, $2); }
+	;
+
+compound_statement
+	: LVINCULUM RVINCULUM					{ pdebug(__LINE__); BlockStatement *node = new BlockStatement; $$ = node; setLoc(node, $1, $2); }
+	| LVINCULUM statement_seq RVINCULUM
+		{
+			pdebug(__LINE__);
+			//
+			BlockStatement *node = new BlockStatement;
+			node->subStatements = (std::vector<Statement *> *)$2;
+			if(node->subStatements)
+			{
+				Node helper;
+				BlockScope *scope = new BlockScope;
+				//
+				// declarations/definitions
+				std::vector<DefinitionUnit *> *declsOrDefns;
+				for(size_t i = 0, im = node->subStatements->size(); i < im; ++i)
+				{
+					helper.setNode(node->subStatements->at(i));
+					if(helper == NodeId::DECLARATION_OR_DEFINITION_STATEMENT)
+					{
+						declsOrDefns = ((DeclarationOrDefinitionStatement *)node->subStatements->at(i))->declOrDefn;
+						for(size_t i = 0, im = declsOrDefns->size(); i < im; ++i)
+						{
+							scope->addScopeMember(declsOrDefns->at(i));
+							unit->opensScope->removeScopeMember(declsOrDefns->at(i));
+						}
+					}
+					
+				}
+				//
+				// subscopes
+				if(unit->opensScope->childScope)
+				{
+					if(node->subStatements)
+					{
+						Node helper;
+						BlockScope *tmpScope;
+						for(size_t i = 0, im = node->subStatements->size(); i < im; ++i)
+						{
+							helper.setNode(node->subStatements->at(i));
+							// get scope if exists
+							if(helper == NodeId::BLOCK_STATEMENT)
+							{
+								tmpScope = ((BlockStatement *)node->subStatements->at(i))->opensScope;
+							}
+							else if(helper == NodeId::IF_STATEMENT)
+							{
+								tmpScope = ((IfStatement *)node->subStatements->at(i))->opensScope;
+							}
+							else if(helper == NodeId::SWITCH_STATEMENT)
+							{
+								tmpScope = ((SwitchStatement *)node->subStatements->at(i))->opensScope;
+							}
+							else if(helper == NodeId::LOOP_STATEMENT)
+							{
+								tmpScope = ((LoopStatement *)node->subStatements->at(i))->opensScope;
+							}
+							else
+							{
+								tmpScope = NULL;
+							}
+							// move scope from global to children
+							if(tmpScope)
+							{
+								scope->addChildScope(tmpScope);
+								unit->opensScope->removeChildScope(tmpScope);
+							}
+						}
+					}
+				}
+				//
+				node->opensScope = scope;
+				unit->opensScope->addChildScope(scope);
+			}
+			//
+			$$ = node;
+			setLoc(node, $1, $3); 
+		}
+	;
+
+statement_seq
+	: statement
+		{
+			pdebug(__LINE__);
+			//
+			$$ = new VECTYPE;
+			$$->push_back($1);
+		}
+	| statement_seq statement
+		{
+			pdebug(__LINE__);
+			//
+			$1->push_back($2);
+		}
+	;
+
+selection_statement
+	: KW_IF LPAR condition RPAR statement
+		{
+			pdebug(__LINE__);
+			//
+			IfStatement *node = new IfStatement;
+			node->condition = (Expression *)$3;
+			node->thenBody = (Statement *)$5;
+			//
+			BlockScope *scope = new BlockScope;
+			//
+			// declarations/definitions
+			if(node->condition)
+			{
+				Node helper(node->condition);
+				if(helper == NodeId::VARIABLE_DEFINITION)
+				{
+					scope->addScopeMember((DefinitionUnit *)(node->condition));
+					unit->opensScope->removeScopeMember((DefinitionUnit *)(node->condition));
+				}
+			}
+			updateBlockScope(node->thenBody, scope, unit->opensScope);
+			//
+			node->opensScope = scope;
+			unit->opensScope->addChildScope(scope);
+			//
+			$$ = node;
+			setLoc(node, $1, ((GASTMSyntaxObject *)$5)->locLast); 
+		}
+	| KW_IF LPAR condition RPAR statement KW_ELSE statement
+		{
+			pdebug(__LINE__);
+			//
+			IfStatement *node = new IfStatement;
+			node->condition = (Expression *)$3;
+			node->thenBody = (Statement *)$5;
+			node->elseBody = (Statement *)$7;
+			//
+			BlockScope *scope = new BlockScope;
+			//
+			// declarations/definitions
+			if(node->condition)
+			{
+				Node helper(node->condition);
+				if(helper == NodeId::VARIABLE_DEFINITION)
+				{
+					scope->addScopeMember((DefinitionUnit *)(node->condition));
+					unit->opensScope->removeScopeMember((DefinitionUnit *)(node->condition));
+				}
+			}
+			updateBlockScope(node->thenBody, scope, unit->opensScope);
+			updateBlockScope(node->elseBody, scope, unit->opensScope);
+			//
+			node->opensScope = scope;
+			unit->opensScope->addChildScope(scope);
+			//
+			$$ = node;
+			setLoc(node, $1, ((GASTMSyntaxObject *)$7)->locLast); 
+		}
+	| KW_SWITCH LPAR condition RPAR statement
+		{
+			pdebug(__LINE__);
+			//
+			SwitchStatement *node = new SwitchStatement;
+			node->switchExpression = (Expression *)$3;
+			node->body = (Statement *)$5;
+			//
+			BlockScope *scope = new BlockScope;
+			//
+			// declarations/definitions
+			if(node->switchExpression)
+			{
+				Node helper(node->switchExpression);
+				if(helper == NodeId::VARIABLE_DEFINITION)
+				{
+					scope->addScopeMember((DefinitionUnit *)(node->switchExpression));
+					unit->opensScope->removeScopeMember((DefinitionUnit *)(node->switchExpression));
+				}
+			}
+			updateBlockScope(node->body, scope, unit->opensScope);
+			//
+			node->opensScope = scope;
+			unit->opensScope->addChildScope(scope);
+			//
+			$$ = node;
+			setLoc(node, $1, ((GASTMSyntaxObject *)$5)->locLast); 
+		}
+	;
+
+condition
+	: expression	{ pdebug(__LINE__); }
+	| type_specifier_seq declarator OP_ASSIGN assignment_expression
+		{
+			pdebug(__LINE__);
+			//
+			PointerType *ptr = NULL;
+			VariableDefinition *node = new VariableDefinition;
+			VariableDeclaration *tmp = (VariableDeclaration *)$2;
+			node->identifierName = tmp->identifierName;
+			node->type = tmp->type;
+			//
+			Node helper($1);
+			if(helper == NodeId::TYPE_REFERENCE)
+			{
+				if(node->type)
+				{
+					ptr = (PointerType *)((UnnamedTypeReference *)node->type)->type;
+					ptr->baseType = (TypeReference *)$1;
+				}
+				else
+				{
+					node->type = (TypeReference *)$1;
+				}
+			}
+			else
+			{
+				if(node->type)
+				{
+					ptr = (PointerType *)((UnnamedTypeReference *)node->type)->type;
+					ptr->baseType = new UnnamedTypeReference;
+					((UnnamedTypeReference *)ptr->baseType)->type = (Type *)$1;
+				}
+				else
+				{
+					node->type = new UnnamedTypeReference;
+					((UnnamedTypeReference *)node->type)->type = (Type *)$1;
+				}
+			}
+			//
+			node->initialValue = (Expression *)$4;
+			unit->opensScope->addScopeMember(node);
+			//
+			TypeReference *typeRef = (ptr ? ptr->baseType : node->type);
+			helper.setNode(typeRef);
+			if(helper == NodeId::UNNAMED_TYPE_REFERENCE)
+			{
+				setLoc(node, ((UnnamedTypeReference *)typeRef)->type->locFirst, node->initialValue->locLast);
+			}
+			else
+			{
+				setLoc(node, ((NamedTypeReference *)typeRef)->aType->locFirst, node->initialValue->locLast);
+			}
+			$$ = node;
+		}
+	;
+
+iteration_statement
+	: KW_WHILE LPAR condition RPAR statement
+		{
+			pdebug(__LINE__);
+			//
+			WhileStatement *node = new WhileStatement;
+			node->condition = (Expression *)$3;
+			node->body = (Statement *)$5;
+			//
+			BlockScope *scope = new BlockScope;
+			//
+			// declarations/definitions
+			if(node->condition)
+			{
+				Node helper(node->condition);
+				if(helper == NodeId::VARIABLE_DEFINITION)
+				{
+					scope->addScopeMember((DefinitionUnit *)(node->condition));
+					unit->opensScope->removeScopeMember((DefinitionUnit *)(node->condition));
+				}
+			}
+			updateBlockScope(node->body, scope, unit->opensScope);
+			//
+			node->opensScope = scope;
+			unit->opensScope->addChildScope(scope);
+			//
+			$$ = node;
+			setLoc(node, $1, node->body->locLast); 
+		}
+	| KW_DO statement KW_WHILE LPAR expression RPAR SEMICOLON
+		{
+			pdebug(__LINE__);
+			//
+			DoWhileStatement *node = new DoWhileStatement;
+			node->body = (Statement *)$2;
+			node->condition = (Expression *)$5;
+			//
+			BlockScope *scope = new BlockScope;
+			updateBlockScope(node->body, scope, unit->opensScope);
+			//
+			node->opensScope = scope;
+			unit->opensScope->addChildScope(scope);
+			//
+			$$ = node;
+			setLoc(node, $1, $7); 
+		}
+	| KW_FOR LPAR for_init_statement SEMICOLON RPAR statement
+		{
+			pdebug(__LINE__);
+			//
+			ForStatement *node = new ForStatement;
+			node->initBody = (Statement *)$3;
+			node->body = (Statement *)$6;
+			//
+			BlockScope *scope = new BlockScope;
+			//
+			// declarations/definitions
+			Node helper;
+			if(node->initBody)
+			{
+				helper.setNode(node->initBody);
+				if(helper == NodeId::DECLARATION_OR_DEFINITION_STATEMENT)
+				{
+					std::vector<DefinitionUnit *> *declsOrDefns = ((DeclarationOrDefinitionStatement *)node->initBody)->declOrDefn;
+					if(declsOrDefns)
+					{
+						for(size_t i = 0, im = declsOrDefns->size(); i < im; ++i)
+						{
+							scope->addScopeMember(declsOrDefns->at(i));
+							unit->opensScope->removeScopeMember(declsOrDefns->at(i));
+						}
+					}
+				}
+			}
+			updateBlockScope(node->body, scope, unit->opensScope);
+			//
+			node->opensScope = scope;
+			unit->opensScope->addChildScope(scope);
+			//
+			$$ = node;
+			setLoc(node, $1, node->body->locLast); 
+		}
+	| KW_FOR LPAR for_init_statement condition SEMICOLON RPAR statement
+		{
+			pdebug(__LINE__);
+			//
+			ForStatement *node = new ForStatement;
+			node->initBody = (Statement *)$3;
+			node->condition = (Expression *)$4;
+			node->body = (Statement *)$7;
+			//
+			BlockScope *scope = new BlockScope;
+			//
+			// declarations/definitions
+			Node helper;
+			if(node->initBody)
+			{
+				helper.setNode(node->initBody);
+				if(helper == NodeId::DECLARATION_OR_DEFINITION_STATEMENT)
+				{
+					std::vector<DefinitionUnit *> *declsOrDefns = ((DeclarationOrDefinitionStatement *)node->initBody)->declOrDefn;
+					if(declsOrDefns)
+					{
+						for(size_t i = 0, im = declsOrDefns->size(); i < im; ++i)
+						{
+							scope->addScopeMember(declsOrDefns->at(i));
+							unit->opensScope->removeScopeMember(declsOrDefns->at(i));
+						}
+					}
+				}
+			}
+			//
+			if(node->condition)
+			{
+				helper.setNode(node->condition);
+				if(helper == NodeId::VARIABLE_DEFINITION)
+				{
+					scope->addScopeMember((DefinitionUnit *)(node->condition));
+					unit->opensScope->removeScopeMember((DefinitionUnit *)(node->condition));
+				}
+			}
+			//
+			updateBlockScope(node->body, scope, unit->opensScope);
+			//
+			node->opensScope = scope;
+			unit->opensScope->addChildScope(scope);
+			//
+			$$ = node;
+			setLoc(node, $1, node->body->locLast); 
+		}
+	| KW_FOR LPAR for_init_statement SEMICOLON expression RPAR statement
+		{
+			pdebug(__LINE__);
+			//
+			ForStatement *node = new ForStatement;
+			node->initBody = (Statement *)$3;
+			node->iterationBody = (Expression *)$5;
+			node->body = (Statement *)$7;
+			//
+			BlockScope *scope = new BlockScope;
+			//
+			// declarations/definitions
+			Node helper;
+			if(node->initBody)
+			{
+				helper.setNode(node->initBody);
+				if(helper == NodeId::DECLARATION_OR_DEFINITION_STATEMENT)
+				{
+					std::vector<DefinitionUnit *> *declsOrDefns = ((DeclarationOrDefinitionStatement *)node->initBody)->declOrDefn;
+					if(declsOrDefns)
+					{
+						for(size_t i = 0, im = declsOrDefns->size(); i < im; ++i)
+						{
+							scope->addScopeMember(declsOrDefns->at(i));
+							unit->opensScope->removeScopeMember(declsOrDefns->at(i));
+						}
+					}
+				}
+			}
+			//
+			updateBlockScope(node->body, scope, unit->opensScope);
+			//
+			node->opensScope = scope;
+			unit->opensScope->addChildScope(scope);
+			//
+			$$ = node;
+			setLoc(node, $1, node->body->locLast); 
+		}
+	| KW_FOR LPAR for_init_statement condition SEMICOLON expression RPAR statement
+		{
+			pdebug(__LINE__);
+			//
+			ForStatement *node = new ForStatement;
+			node->initBody = (Statement *)$3;
+			node->condition = (Expression *)$4;
+			node->iterationBody = (Expression *)$6;
+			node->body = (Statement *)$8;
+			//
+			BlockScope *scope = new BlockScope;
+			//
+			// declarations/definitions
+			Node helper;
+			if(node->initBody)
+			{
+				helper.setNode(node->initBody);
+				if(helper == NodeId::DECLARATION_OR_DEFINITION_STATEMENT)
+				{
+					std::vector<DefinitionUnit *> *declsOrDefns = ((DeclarationOrDefinitionStatement *)node->initBody)->declOrDefn;
+					if(declsOrDefns)
+					{
+						for(size_t i = 0, im = declsOrDefns->size(); i < im; ++i)
+						{
+							scope->addScopeMember(declsOrDefns->at(i));
+							unit->opensScope->removeScopeMember(declsOrDefns->at(i));
+						}
+					}
+				}
+			}
+			//
+			if(node->condition)
+			{
+				helper.setNode(node->condition);
+				if(helper == NodeId::VARIABLE_DEFINITION)
+				{
+					scope->addScopeMember((DefinitionUnit *)(node->condition));
+					unit->opensScope->removeScopeMember((DefinitionUnit *)(node->condition));
+				}
+			}
+			//
+			updateBlockScope(node->body, scope, unit->opensScope);
+			//
+			node->opensScope = scope;
+			unit->opensScope->addChildScope(scope);
+			//
+			$$ = node;
+			setLoc(node, $1, node->body->locLast); 
+		}
+	;
+
+for_init_statement
+	: expression_statement	{ pdebug(__LINE__); } %merge <declExprMerge>
+	| simple_declaration	%merge <declExprMerge>
+		{
+			pdebug(__LINE__);
+			//
+			DeclarationOrDefinitionStatement *node = new DeclarationOrDefinitionStatement;
+			node->declOrDefn = (std::vector<DefinitionUnit *> *)$1;
+			//
+			$$ = node;
+			setLoc(node, node->declOrDefn->at(0)->locFirst, node->declOrDefn->at(node->declOrDefn->size() - 1)->locLast);
+		}
+	;
+
+jump_statement
+	: KW_BREAK SEMICOLON	{ pdebug(__LINE__); BreakStatement *node = new BreakStatement; $$ = node; setLoc(node, $1, $2); }
+	| KW_CONTINUE SEMICOLON	{ pdebug(__LINE__); ContinueStatement *node = new ContinueStatement; $$ = node; setLoc(node, $1, $2); }
+	| KW_RETURN SEMICOLON	{ pdebug(__LINE__); ReturnStatement *node = new ReturnStatement; $$ = node; setLoc(node, $1, $2); }
+	| KW_RETURN expression SEMICOLON	{ pdebug(__LINE__); ReturnStatement *node = new ReturnStatement; node->returnValue = (Expression *)$2; $$ = node; setLoc(node, $1, $3); }
+	| KW_GOTO IDENTIFIER SEMICOLON		{ pdebug(__LINE__); JumpStatement *node = new JumpStatement; /*node->target = new LabelAccess; node->target->aName = new Name; node->target->aName->nameString = $2->token;*/ /*$$->aDefinition = kde je?*/ $$ = node; setLoc(node, $1, $3); }
+	;
+
+declaration_statement
+	: block_declaration
+		{
+			pdebug(__LINE__);
+			//
+			DeclarationOrDefinitionStatement *node = new DeclarationOrDefinitionStatement;
+			node->declOrDefn = (std::vector<DefinitionUnit *> *)$1;
+			//
+			if(node->declOrDefn)
+			{
+				// Scope
+				for(size_t i = 0, im = node->declOrDefn->size(); i < im; ++i)
+				{
+					unit->opensScope->addScopeMember(node->declOrDefn->at(i));
+				}
+				//
+				setLoc(node, node->declOrDefn->at(0)->locFirst, node->declOrDefn->at(node->declOrDefn->size() - 1)->locLast);
+			}
+			//
+			$$ = node;
+		}
+	;
+
+declaration_seq
+	: declaration	{ pdebug(__LINE__); $$ = $1; }
+	| declaration_seq declaration	{ pdebug(__LINE__); for(size_t i = 0, im = $2->size(); i < im; ++i) $1->push_back($2->at(i)); delete $2; $$ = $1; }
+	;
+
+declaration
+	: block_declaration			{ pdebug(__LINE__); }
+	| function_definition		{ pdebug(__LINE__); $$ = new VECTYPE; $$->push_back($1); }
+	| template_declaration		{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL /* TODO: Bison type problem */ }
+	| explicit_instantiation	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL /* TODO: Bison type problem */ }
+	| explicit_specialization	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL /* TODO: Bison type problem */ }
+	| linkage_specification		{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL /* TODO: Bison type problem */ }
+	| namespace_definition		{ pdebug(__LINE__); $$ = new VECTYPE; $$->push_back($1); }
+	;
+
+block_declaration
+	: simple_declaration	{ pdebug(__LINE__); }
+	| asm_definition		{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL /* TODO: Bison type problem */ }
+	| namespace_alias_definition	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL /* TODO: Bison type problem */ }
+	| using_declaration		{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL /* TODO: Bison type problem */ }
+	| using_directive		{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL /* TODO: Bison type problem */ }
+	;
+
+simple_declaration
+	: SEMICOLON	{ pdebug(__LINE__); $$ = NULL; }
+	| decl_specifier_seq SEMICOLON	%dprec 2
+		{
+			pdebug(__LINE__);
+			//
+			$$ = new VECTYPE;
+			int index = findNodeById($1, NodeId::AGGREGATE_TYPE_DEFINITION);
+			if(index < 0)
+			{
+				VariableDeclaration *node = getVariableDeclaration($1);
+				if(node == NULL)
+				{
+					yyerror(unit, "Error: Illegal variable declaration!");
+					YYABORT;
+				}
+				$$->push_back(node);
+			}
+			else
+			{
+				$$->push_back($1->at(index));
+			}
+		}
+	| init_declarator_list SEMICOLON	{ pdebug(__LINE__); $$ = $1; }	%dprec 1
+	| decl_specifier_seq init_declarator_list SEMICOLON	%dprec 3
+		{
+			pdebug(__LINE__);
+			//
+			Node helper;
+			for(size_t i = 0, im = $2->size(); i < im; ++i)
+			{
+				helper.setNode($2->at(i));
+				if(helper == NodeId::VARIABLE_DECLARATION)
+				{
+					if(getVariableDeclaration($1, (VariableDeclaration *)$2->at(i)) == NULL)
+					{
+						yyerror(unit, "Error: Illegal variable declaration!");
+						YYABORT;
+					}
+				}
+				else if(helper == NodeId::VARIABLE_DEFINITION)
+				{
+					if(getVariableDefinition($1, (VariableDefinition *)$2->at(i)) == NULL)
+					{
+						yyerror(unit, "Error: Illegal variable declaration!");
+						YYABORT;
+					}
+				}
+				else if(helper == NodeId::FUNCTION_DECLARATION)
+				{
+					FunctionDeclaration *fnDecl = (FunctionDeclaration *)$2->at(i);
+					if(getFunctionDeclaration($1, (FunctionDeclaration *)$2->at(i)) == NULL)
+					{
+						yyerror(unit, "Error: Illegal variable declaration!");
+						YYABORT;
+					}
+					// remove parameters from scope - it was added only for function definition
+					if(fnDecl->formalParameters)
+					{
+						for(size_t i = 0, im = fnDecl->formalParameters->size(); i < im; ++i)
+						{
+							unit->opensScope->removeScopeMember(fnDecl->formalParameters->at(i));
+						}
+					}
+				}
+				else
+				{
+					yyerror(unit, "Semantic error: unexpected node!\n");
+					YYABORT;
+				}
+			}
+			$1->clear();
+			delete $1;
+			//
+			$$ = $2;
+		}
+	;
+
+decl_specifier
+	: storage_class_specifier	{ pdebug(__LINE__); }
+	| type_specifier	{ pdebug(__LINE__); }
+	| function_specifier	{ pdebug(__LINE__); }
+	| KW_FRIEND	{ pdebug(__LINE__); }
+	| KW_TYPEDEF	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+decl_specifier_seq
+	: decl_specifier { pdebug(__LINE__); $$ = new VECTYPE; $$->push_back($1); }
+	| decl_specifier_seq decl_specifier
+		{
+			pdebug(__LINE__);
+			//
+			$$ = $1;
+			Node hlp1, hlp2($2);
+			//
+			// check for duplicity
+			for(size_t i = 0, im = $$->size(); i < im; ++i)
+			{
+				hlp1.setNode($$->at(i));
+				if(hlp1[0] == hlp2[0])
+				{
+					if(hlp1 == NodeId::SOURCE_LOCATION)
+					{
+						if(((SourceLocation *)$2)->token == ((SourceLocation *)$$->at(i))->token)
+						{
+							yyerror(unit, "Error: Illegal declaration sequence!\n");
+							YYABORT;
+						}
+					}
+					else if(hlp1 != NodeId::LONG_INTEGER)
+					{
+						yyerror(unit, "aaError: Illegal declaration sequence!\n");
+						YYABORT;
+					}
+				}
+			}
+			//
+			// add
+			$$->push_back($2);
+		}
+	;
+
+storage_class_specifier
+	: KW_AUTO		{ pdebug(__LINE__); }
+	| KW_REGISTER	{ pdebug(__LINE__); }
+	| KW_STATIC		{ pdebug(__LINE__); }
+	| KW_EXTERN		{ pdebug(__LINE__); }
+	| KW_MUTABLE	{ pdebug(__LINE__); }
+	;
+
+function_specifier
+	: KW_INLINE		{ pdebug(__LINE__); }
+	| KW_VIRTUAL	{ pdebug(__LINE__); }
+	| KW_EXPLICIT	{ pdebug(__LINE__); }
+	;
+
+type_specifier
+	: simple_type_specifier	{ pdebug(__LINE__); }
+	| class_specifier	{ pdebug(__LINE__); }
+	| enum_specifier	{ pdebug(__LINE__); }
+	| elaborated_type_specifier	{ pdebug(__LINE__); }
+	| cv_qualifier	{ pdebug(__LINE__); }
+	;
+
+simple_type_specifier
+	: type_name	{ pdebug(__LINE__); }
+	| COLON_2X type_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| nested_name_specifier type_name { pdebug(__LINE__); $$ = NULL; /*QualifiedIdentifierReference *node = new QualifiedIdentifierReference; node->qualifiers = (Expression *)$1; node->member = (IdentifierReference *)$2; $$ = node;*/ }
+	| COLON_2X nested_name_specifier type_name { pdebug(__LINE__); $$ = NULL; /*QualifiedIdentifierReference *node = new QualifiedIdentifierReference; node->qualifiers = (Expression *)$2; node->member = (IdentifierReference *)$3; $$ = node;*/ }
+	| nested_name_specifier KW_TEMPLATE template_id	{ pdebug(__LINE__); }
+	| COLON_2X nested_name_specifier KW_TEMPLATE template_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_CHAR		{ pdebug(__LINE__); Character *node = new Character; $$ = node; setLoc(node, $1); }
+	| KW_WCHAR_T	{ pdebug(__LINE__); WideCharacter *node = new WideCharacter; $$ = node; setLoc(node, $1); }
+	| KW_BOOL		{ pdebug(__LINE__); Boolean *node = new Boolean; $$ = node; setLoc(node, $1); }
+	| KW_SHORT		{ pdebug(__LINE__); ShortInteger *node = new ShortInteger; $$ = node; setLoc(node, $1); }
+	| KW_INT		{ pdebug(__LINE__); Integer *node = new Integer; $$ = node; setLoc(node, $1); }
+	| KW_LONG		{ pdebug(__LINE__); LongInteger *node = new LongInteger; $$ = node; setLoc(node, $1); }
+	| KW_SIGNED		{ pdebug(__LINE__); $$ = $1; }
+	| KW_UNSIGNED	{ pdebug(__LINE__); $$ = $1; }
+	| KW_FLOAT		{ pdebug(__LINE__); Float *node = new Float; $$ = node; setLoc(node, $1); }
+	| KW_DOUBLE		{ pdebug(__LINE__); Double *node = new Double; $$ = node; setLoc(node, $1); }
+	| KW_VOID		{ pdebug(__LINE__); Void *node = new Void; $$ = node; setLoc(node, $1); }
+	;
+
+type_name
+	: class_name	%merge <classIdMerge>
+		{
+			pdebug(__LINE__);
+			//
+			NamedTypeReference *node = new NamedTypeReference;
+			node->name = (Name *)$1;
+			//
+			setLoc(node, node->name->locFirst);
+			$$ = node;
+		}
+	| IDENTIFIER	%merge <classIdMerge>
+		{
+			pdebug(__LINE__);
+			//
+			NamedTypeReference *node = new NamedTypeReference;
+			node->name = new Name;
+			node->name->nameString = $1->token;
+			//
+			setLoc(node->name, $1);
+			setLoc(node, $1);
+			$$ = node;
+		}
+	;
+
+elaborated_type_specifier
+	: class_key IDENTIFIER	{ pdebug(__LINE__); }
+	| class_key COLON_2X IDENTIFIER	{ pdebug(__LINE__); }
+	| class_key nested_name_specifier IDENTIFIER	{ pdebug(__LINE__); }
+	| class_key COLON_2X nested_name_specifier IDENTIFIER	{ pdebug(__LINE__); }
+	| class_key template_id	{ pdebug(__LINE__); }
+	| class_key COLON_2X template_id	{ pdebug(__LINE__); }
+	| class_key nested_name_specifier template_id	{ pdebug(__LINE__); }
+	| class_key COLON_2X nested_name_specifier template_id	{ pdebug(__LINE__); }
+	| class_key KW_TEMPLATE template_id	{ pdebug(__LINE__); }
+	| class_key COLON_2X KW_TEMPLATE template_id	{ pdebug(__LINE__); }
+	| class_key nested_name_specifier KW_TEMPLATE template_id	{ pdebug(__LINE__); }
+	| class_key COLON_2X nested_name_specifier KW_TEMPLATE template_id	{ pdebug(__LINE__); }
+	| KW_ENUM IDENTIFIER	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_ENUM COLON_2X IDENTIFIER	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_ENUM nested_name_specifier IDENTIFIER	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_ENUM COLON_2X nested_name_specifier IDENTIFIER	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME nested_name_specifier IDENTIFIER	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME COLON_2X nested_name_specifier IDENTIFIER	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME nested_name_specifier template_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME COLON_2X nested_name_specifier template_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME nested_name_specifier KW_TEMPLATE template_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME COLON_2X nested_name_specifier KW_TEMPLATE template_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+enum_specifier
+	: KW_ENUM LVINCULUM RVINCULUM								{ pdebug(__LINE__); TypeDefinition *node = new TypeDefinition; /*node->definitionType = new EnumType*/; $$ = node; }
+	| KW_ENUM IDENTIFIER LVINCULUM RVINCULUM					{ pdebug(__LINE__); NamedTypeDefinition *node = new NamedTypeDefinition; node->name = new Name; node->name->nameString = $2->token; node->definitionType = new NamedType; node->definitionType->body = new EnumType; $$ = node; }
+	| KW_ENUM LVINCULUM enumerator_list RVINCULUM				{ pdebug(__LINE__); TypeDefinition *node = new TypeDefinition; /*node->definitionType = (Type *)$3;*/ $$ = node; }
+	| KW_ENUM IDENTIFIER LVINCULUM enumerator_list RVINCULUM	{ pdebug(__LINE__); NamedTypeDefinition *node = new NamedTypeDefinition; node->name = new Name; node->name->nameString = $2->token; node->definitionType = new NamedType; node->definitionType->body = (EnumType *)$4; $$ = node; }
+	;
+
+enumerator_list
+	: enumerator_definition							{ pdebug(__LINE__); EnumType *node = new EnumType; node->enumLiterals.push_back((EnumLiteralDefinition *)$1); $$ = node; }
+	| enumerator_list COMMA enumerator_definition	{ pdebug(__LINE__); EnumType *node = (EnumType *)$1; node->enumLiterals.push_back((EnumLiteralDefinition *)$3); $$ = node; }
+	;
+
+enumerator_definition
+	: enumerator								{ pdebug(__LINE__); EnumLiteralDefinition *node = new EnumLiteralDefinition; node->identifierName = (Name *)$1; $$ = node; }
+	| enumerator OP_ASSIGN constant_expression	{ pdebug(__LINE__); EnumLiteralDefinition *node = new EnumLiteralDefinition; node->identifierName = (Name *)$1; node->value = (Expression *)$3; $$ = node; }
+	;
+
+enumerator
+	: IDENTIFIER	{ pdebug(__LINE__); Name *node = new Name; node->nameString = $1->token; $$ = node; setLoc(node, $1); }
+	;
+
+namespace_name
+	: IDENTIFIER	{ pdebug(__LINE__); IdentifierReference *node = new IdentifierReference; node->name = new Name; node->name->nameString = $1->token; $$ = node; setLoc(node, $1); }
+	;
+
+namespace_definition
+	: named_namespace_definition	{ pdebug(__LINE__); $$ = $1; }
+	| unnamed_namespace_definition	{ pdebug(__LINE__); $$ = $1; }
+	;
+
+named_namespace_definition
+	: KW_NAMESPACE IDENTIFIER LVINCULUM namespace_body RVINCULUM
+		{
+			pdebug(__LINE__);
+			//
+			NameSpaceDefinition *node = new NameSpaceDefinition;
+			node->nameSpace = new Name;
+			node->nameSpace->nameString = $2->token;
+			node->body = (std::vector<DefinitionUnit *> *)$4;
+			node->nameSpaceType = new NameSpaceType;
+			//
+			if(node->body)
+			{
+				NameSpaceScope *scope = new NameSpaceScope;
+				//
+				// declarations/definitions
+				for(size_t i = 0, im = node->body->size(); i < im; ++i)
+				{
+					scope->addScopeMember(node->body->at(i));
+					unit->opensScope->removeScopeMember(node->body->at(i));
+					//
+					// set parent node
+					node->body->at(i)->parent = node;
+				}
+				//
+				// scope children
+				if(unit->opensScope->childScope)
+				{
+					//if(node->body)	// already checked
+					{
+						Node helper;
+						Scope *tmpScope;
+						for(size_t i = 0, im = node->body->size(); i < im; ++i)
+						{
+							helper.setNode(node->body->at(i));
+							if(helper == NodeId::AGGREGATE_TYPE_DEFINITION)
+							{
+								tmpScope = ((AggregateTypeDefinition *)node->body->at(i))->aggregateType->opensScope;
+							}
+							else if(helper == NodeId::FUNCTION_DEFINITION)
+							{
+								tmpScope = ((FunctionDefinition *)node->body->at(i))->opensScope;
+							}
+							else if(helper == NodeId::NAME_SPACE_DEFINITION)
+							{
+								tmpScope = ((NameSpaceDefinition *)node->body->at(i))->opensScope;
+							}
+							else
+							{
+								tmpScope = NULL;
+							}
+							// move scope from global to children
+							if(tmpScope)
+							{
+								scope->addChildScope(tmpScope);
+								unit->opensScope->removeChildScope(tmpScope);
+							}
+						}
+					}
+				}
+				//
+				node->opensScope = scope;
+				unit->opensScope->addChildScope(scope);
+			}
+			//
+			$$ = node;
+			setLoc(node, $1, $5);
+		}
+	;
+
+unnamed_namespace_definition
+	: KW_NAMESPACE LVINCULUM namespace_body RVINCULUM
+		{
+			pdebug(__LINE__);
+			//
+			NameSpaceDefinition *node = new NameSpaceDefinition;
+			node->body = (std::vector<DefinitionUnit *> *)$3;
+			node->nameSpaceType = new NameSpaceType;
+			//
+			if(node->body)
+			{
+				NameSpaceScope *scope = new NameSpaceScope;
+				//
+				// declarations/definitions
+				for(size_t i = 0, im = node->body->size(); i < im; ++i)
+				{
+					scope->addScopeMember(node->body->at(i));
+					unit->opensScope->removeScopeMember(node->body->at(i));
+					//
+					// set parent node
+					node->body->at(i)->parent = node;
+				}
+				//
+				// scope children
+				if(unit->opensScope->childScope)
+				{
+					//if(node->body)	// already checked
+					{
+						Node helper;
+						Scope *tmpScope;
+						for(size_t i = 0, im = node->body->size(); i < im; ++i)
+						{
+							helper.setNode(node->body->at(i));
+							if(helper == NodeId::AGGREGATE_TYPE_DEFINITION)
+							{
+								tmpScope = ((AggregateTypeDefinition *)node->body->at(i))->aggregateType->opensScope;
+							}
+							else if(helper == NodeId::FUNCTION_DEFINITION)
+							{
+								tmpScope = ((FunctionDefinition *)node->body->at(i))->opensScope;
+							}
+							else if(helper == NodeId::NAME_SPACE_DEFINITION)
+							{
+								tmpScope = ((NameSpaceDefinition *)node->body->at(i))->opensScope;
+							}
+							else
+							{
+								tmpScope = NULL;
+							}
+							// move scope from global to children
+							if(tmpScope)
+							{
+								scope->addChildScope(tmpScope);
+								unit->opensScope->removeChildScope(tmpScope);
+							}
+						}
+					}
+				}
+				//
+				node->opensScope = scope;
+				unit->opensScope->addChildScope(scope);
+			}
+			//
+			$$ = node;
+			setLoc(node, $1, $4);
+		}
+	;
+
+namespace_body
+	: 	{ pdebug(__LINE__); $$ = NULL; }
+	| declaration_seq	{ pdebug(__LINE__); $$ = $1; }
+	;
+
+namespace_alias_definition
+	: KW_NAMESPACE IDENTIFIER OP_ASSIGN qualified_namespace_specifier SEMICOLON	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+qualified_namespace_specifier
+	: namespace_name	{ pdebug(__LINE__); }
+	| COLON_2X namespace_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| nested_name_specifier namespace_name	{ pdebug(__LINE__); }
+	| COLON_2X nested_name_specifier namespace_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+using_declaration
+	: KW_USING nested_name_specifier unqualified_id SEMICOLON	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_USING KW_TYPENAME nested_name_specifier unqualified_id SEMICOLON	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_USING COLON_2X nested_name_specifier unqualified_id SEMICOLON	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_USING KW_TYPENAME COLON_2X nested_name_specifier unqualified_id SEMICOLON	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_USING COLON_2X unqualified_id SEMICOLON	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+using_directive
+	: KW_USING KW_NAMESPACE namespace_name SEMICOLON	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_USING KW_NAMESPACE COLON_2X namespace_name SEMICOLON	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_USING KW_NAMESPACE nested_name_specifier namespace_name SEMICOLON	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_USING KW_NAMESPACE COLON_2X nested_name_specifier namespace_name SEMICOLON	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+asm_definition
+	: KW_ASM LPAR STR_LITERAL RPAR SEMICOLON	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+linkage_specification
+	: KW_EXTERN STR_LITERAL LVINCULUM RVINCULUM	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_EXTERN STR_LITERAL LVINCULUM declaration_seq RVINCULUM	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_EXTERN STR_LITERAL declaration	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+init_declarator_list
+	: init_declarator	{ pdebug(__LINE__); $$ = new VECTYPE; $$->push_back($1); }
+	| init_declarator_list COMMA init_declarator	{ pdebug(__LINE__); $1->push_back($3); $$ = $1; }
+	;
+
+init_declarator
+	: declarator { pdebug(__LINE__); $$ = $1; }
+	| declarator initializer
+		{
+			pdebug(__LINE__);
+			//
+			VariableDeclaration *tmp = (VariableDeclaration *)$1;
+			VariableDefinition *node = new VariableDefinition;
+			node->type = tmp->type;
+			node->identifierName = tmp->identifierName;
+			node->initialValue = (Expression *)$2;
+			unit->opensScope->addScopeMember(node);
+			//
+			$$ = node;
+			//
+			if($2)
+			{
+				setLoc(node, ((GASTMSyntaxObject *)$1)->locFirst, ((GASTMSyntaxObject *)$2)->locLast);
+			}
+			else
+			{
+				setLoc(node, ((GASTMSyntaxObject *)$1)->locFirst);
+			}
+		}
+	;
+
+declarator
+	: direct_declarator
+		{
+			pdebug(__LINE__);
+			//
+			Node helper($1);
+			if(helper != NodeId::DECLARATION)
+			{
+				VariableDeclaration *node = new VariableDeclaration;
+				node->identifierName = (Name *)$1;
+				//
+				$$ = node;
+			}
+			else
+			{
+				$$ = $1;
+			}
+		}
+	| ptr_operator declarator
+		{
+			pdebug(__LINE__);
+			//
+			UnnamedTypeReference *ref = new UnnamedTypeReference;
+			ref->type = (PointerType *)$1;
+			//
+			Node helper($2);
+			if(helper != NodeId::DECLARATION)
+			{
+				VariableDeclaration *node = new VariableDeclaration;
+				node->identifierName = (Name *)$2;
+				node->type = ref;
+				//
+				$$ = node;
+			}
+			else
+			{
+				Declaration *node = (Declaration *)$2;
+				//if(!node->type)
+					node->type = ref;
+				//
+				$$ = node;
+			}
+		}
+	;
+
+direct_declarator
+	: declarator_id	{ pdebug(__LINE__);  }
+	| direct_declarator LPAR parameter_declaration_clause RPAR
+		{
+			pdebug(__LINE__);
+			//
+			FunctionDeclaration *node = new FunctionDeclaration;
+			node->identifierName = (Name *)$1;
+			node->formalParameters = (std::vector<FormalParameterDefinition *> *)$3;
+			//
+			$$ = node;
+			setLoc(node, ((GASTMSyntaxObject *)$1)->locFirst, $4);
+		}
+	| direct_declarator LPAR parameter_declaration_clause RPAR cv_qualifier_seq
+		{
+			pdebug(__LINE__);
+			//
+			if(((Type *)$5)->isVolatile)
+			{
+				yyerror(unit, "Error: Class method can't be volatile!\n");
+				YYABORT;
+			}
+			//
+			FunctionDeclaration *node = new FunctionDeclaration;
+			node->identifierName = (Name *)$1;
+			node->formalParameters = (std::vector<FormalParameterDefinition *> *)$3;
+			node->functionMemberAttributes = new FunctionMemberAttributes;
+			node->functionMemberAttributes->isThisConst = ((Type *)$5)->isConst;
+			//
+			$$ = node;
+			setLoc(node, ((GASTMSyntaxObject *)$1)->locFirst, ((GASTMSyntaxObject *)$5)->locLast);
+		}
+	| direct_declarator LPAR parameter_declaration_clause RPAR exception_specification	{ pdebug(__LINE__);  }
+	| direct_declarator LPAR parameter_declaration_clause RPAR cv_qualifier_seq exception_specification	{ pdebug(__LINE__);  }
+	| direct_declarator SQ_LPAR SQ_RPAR	{ pdebug(__LINE__);  }
+	| direct_declarator SQ_LPAR constant_expression SQ_RPAR	{ pdebug(__LINE__);  }
+	| LPAR declarator RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+ptr_operator
+	: OP_STAR
+		{
+			pdebug(__LINE__);
+			//
+			PointerType *node = new PointerType;
+			$$ = node;
+		}
+	| OP_STAR cv_qualifier_seq
+		{
+			pdebug(__LINE__);
+			//
+			PointerType *node = new PointerType;
+			node->isConst = ((Type *)$2)->isConst;
+			node->isVolatile = ((Type *)$2)->isVolatile;
+			$$ = node;
+		}
+	| OP_AMP	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| nested_name_specifier OP_STAR	{ pdebug(__LINE__); }
+	| COLON_2X nested_name_specifier OP_STAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| nested_name_specifier OP_STAR cv_qualifier_seq	{ pdebug(__LINE__); }
+	| COLON_2X nested_name_specifier OP_STAR cv_qualifier_seq	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+cv_qualifier_seq
+	: cv_qualifier	{ pdebug(__LINE__); $$ = $1; }
+	| cv_qualifier cv_qualifier_seq
+		{
+			pdebug(__LINE__);
+			//
+			Type *node1 = (Type *)$1, *node2 = (Type *)$2;
+			if(node1->isConst && node2->isConst)
+			{
+				yyerror(unit, "Error: there is too many 'const' qualifiers!");
+				YYABORT;
+			}
+			else if(node1->isVolatile && node2->isVolatile)
+			{
+				yyerror(unit, "Error: there is too many 'volatile' qualifiers!");
+				YYABORT;
+			}
+			else
+			{
+				node1->isConst = true;
+				node1->isVolatile = true;
+				setLoc(node1, node1->locFirst, node2->locLast);
+				delete node2;
+			}
+			//
+			$$ = $1;
+		}
+	;
+
+cv_qualifier
+	: KW_CONST	{ pdebug(__LINE__); Type *node = new Type; node->isConst = true; $$ = node; setLoc(node, $1); }
+	| KW_VOLATILE	{ pdebug(__LINE__); Type *node = new Type; node->isVolatile = true; $$ = node; setLoc(node, $1); }
+	;
+
+declarator_id
+	: id_expression	{ pdebug(__LINE__); }	%merge <declIdMerge>
+	| type_name	{ pdebug(__LINE__); }		%merge <declIdMerge>
+	| COLON_2X type_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| nested_name_specifier type_name	{ pdebug(__LINE__); }
+	| COLON_2X nested_name_specifier type_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+type_id
+	: type_specifier_seq	{ pdebug(__LINE__); }
+	| type_specifier_seq abstract_declarator	{ pdebug(__LINE__); }
+	;
+
+type_specifier_seq
+	: type_specifier	{ pdebug(__LINE__); }
+	| type_specifier type_specifier_seq	{ pdebug(__LINE__); /* TODO: do something!!! */ }
+	;
+
+abstract_declarator
+	: ptr_operator	{ pdebug(__LINE__); }
+	| ptr_operator abstract_declarator	{ pdebug(__LINE__); }
+	| direct_abstract_declarator	{ pdebug(__LINE__); }
+	;
+
+direct_abstract_declarator
+	: LPAR parameter_declaration_clause RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| direct_abstract_declarator LPAR parameter_declaration_clause RPAR	{ pdebug(__LINE__); }
+	| LPAR parameter_declaration_clause RPAR cv_qualifier_seq	{ pdebug(__LINE__); $$ = NULL; yyerror(unit, "Unsupported!"); YYABORT; /* TODO: bison type error */ }
+	| direct_abstract_declarator LPAR parameter_declaration_clause RPAR cv_qualifier_seq	{ pdebug(__LINE__); }
+	| LPAR parameter_declaration_clause RPAR exception_specification	{ pdebug(__LINE__); $$ = NULL; yyerror(unit, "Unsupported!"); YYABORT; /* TODO: bison type error */ }
+	| direct_abstract_declarator LPAR parameter_declaration_clause RPAR exception_specification	{ pdebug(__LINE__); }
+	| LPAR parameter_declaration_clause RPAR cv_qualifier_seq exception_specification	{ pdebug(__LINE__); $$ = NULL; yyerror(unit, "Unsupported!"); YYABORT; /* TODO: bison type error */ }
+	| direct_abstract_declarator LPAR parameter_declaration_clause RPAR cv_qualifier_seq exception_specification	{ pdebug(__LINE__); }
+	| SQ_LPAR SQ_RPAR	{ pdebug(__LINE__); $$ = NULL; yyerror(unit, "Unsupported!"); YYABORT; /* TODO: bison type error */ }
+	| direct_abstract_declarator SQ_LPAR SQ_RPAR	{ pdebug(__LINE__); }
+	| SQ_LPAR constant_expression SQ_RPAR	{ pdebug(__LINE__); $$ = NULL; yyerror(unit, "Unsupported!"); YYABORT; /* TODO: bison type error */ }
+	| direct_abstract_declarator SQ_LPAR constant_expression SQ_RPAR	{ pdebug(__LINE__); }
+	| LPAR abstract_declarator RPAR	{ pdebug(__LINE__); $$ = NULL; yyerror(unit, "Unsupported!"); YYABORT; /* TODO: bison type error */ }
+	;
+
+parameter_declaration_clause
+	: 	{ pdebug(__LINE__); $$ = NULL; }
+	| parameter_declaration_list
+		{
+			pdebug(__LINE__);
+			//
+			// Scope
+			for(size_t i = 0, im = $1->size(); i < im; ++i)
+			{
+				unit->opensScope->addScopeMember((DefinitionUnit *)$1->at(i));
+			}
+			//
+			$$ = $1;
+		}
+	| ELIS
+		{
+			pdebug(__LINE__);
+			//
+			FormalParameterDefinition *param = new FormalParameterDefinition;
+			param->identifierName = new Name;
+			param->identifierName->nameString = $1->token;
+			$$ = new VECTYPE;
+			$$->push_back(param);
+			setLoc(param, $1);
+		}
+	| parameter_declaration_list ELIS
+		{
+			pdebug(__LINE__);
+			//
+			FormalParameterDefinition *param = new FormalParameterDefinition;
+			param->identifierName = new Name;
+			param->identifierName->nameString = $2->token;
+			$1->push_back(param);
+			//
+			// Scope
+			for(size_t i = 0, im = $1->size(); i < im; ++i)
+			{
+				unit->opensScope->addScopeMember((DefinitionUnit *)$1->at(i));
+			}
+			//
+			$$ = $1;
+			setLoc(param, $2);
+		}
+	| parameter_declaration_list COMMA ELIS
+		{
+			pdebug(__LINE__);
+			//
+			FormalParameterDefinition *param = new FormalParameterDefinition;
+			param->identifierName = new Name;
+			param->identifierName->nameString = $3->token;
+			$1->push_back(param);
+			//
+			// Scope
+			for(size_t i = 0, im = $1->size(); i < im; ++i)
+			{
+				unit->opensScope->addScopeMember((DefinitionUnit *)$1->at(i));
+			}
+			//
+			$$ = $1;
+			setLoc(param, $3);
+		}
+	;
+
+parameter_declaration_list
+	: parameter_declaration	{ pdebug(__LINE__); $$ = new VECTYPE; $$->push_back($1); }
+	| parameter_declaration_list COMMA parameter_declaration { pdebug(__LINE__); $1->push_back($3); }
+	;
+
+parameter_declaration
+	: decl_specifier_seq declarator		%dprec 2
+		{
+			pdebug(__LINE__);
+			//
+			FormalParameterDefinition *node = getFormalParameterDefinition($1);
+			VariableDeclaration *tmp = (VariableDeclaration *)$2;
+			node->identifierName = tmp->identifierName;
+			//
+			if(tmp->type)	// if it's not empty, it's pointer!
+			{
+				PointerType *ptr = (PointerType *)((UnnamedTypeReference *)tmp->type)->type;
+				ptr->baseType = (TypeReference *)node->type;
+				node->type = tmp->type;
+			}
+			//
+			$$ = node;
+			setLoc(node, node->locFirst, node->identifierName->locLast);
+		}
+	| decl_specifier_seq declarator OP_ASSIGN assignment_expression		%dprec 2
+		{
+			pdebug(__LINE__);
+			//
+			FormalParameterDefinition *node = getFormalParameterDefinition($1);
+			VariableDeclaration *tmp = (VariableDeclaration *)$2;
+			node->identifierName = tmp->identifierName;
+			node->initialValue = (Expression *)$4;
+			//
+			if(tmp->type)	// if it's not empty, it's pointer!
+			{
+				PointerType *ptr = (PointerType *)((UnnamedTypeReference *)tmp->type)->type;
+				ptr->baseType = (TypeReference *)node->type;
+				node->type = tmp->type;
+			}
+			
+			//
+			$$ = node;
+			setLoc(node, node->locFirst, node->initialValue->locLast);
+		}
+	| decl_specifier_seq		%dprec 1
+		{
+			pdebug(__LINE__);
+			//
+			FormalParameterDefinition *node = getFormalParameterDefinition($1);
+			//
+			$$ = node;
+		}
+	| decl_specifier_seq abstract_declarator	{ pdebug(__LINE__); }
+	| decl_specifier_seq OP_ASSIGN assignment_expression		%dprec 1
+		{
+			pdebug(__LINE__);
+			//
+			FormalParameterDefinition *node = getFormalParameterDefinition($1);
+			node->initialValue = (Expression *)$3;
+			//
+			$$ = node;
+			setLoc(node, node->locFirst, node->initialValue->locLast);
+		}
+	| decl_specifier_seq abstract_declarator OP_ASSIGN assignment_expression	{ pdebug(__LINE__); }
+	;
+
+function_definition
+	: declarator function_body /* typically Constructors and Destructors */
+		{
+			pdebug(__LINE__);
+			//
+			FunctionDefinition *node = new FunctionDefinition;
+			node->body = (Statement *)$2;
+			//
+			FunctionDeclaration *tmp = (FunctionDeclaration *)$1;
+			node->declRef = tmp; tmp->defRef = node;
+			node->accessKind = tmp->accessKind;
+			node->formalParameters = tmp->formalParameters;
+			node->functionMemberAttributes = tmp->functionMemberAttributes;
+			node->identifierName = tmp->identifierName;
+			node->isRegister = tmp->isRegister;
+			node->linkageSpecifier = tmp->linkageSpecifier;
+			node->storageSpecifiers = tmp->storageSpecifiers;
+			//
+			// declarations/definitions
+			FunctionScope *scope = new FunctionScope;
+			if(node->formalParameters)
+			{
+				for(size_t i = 0, im = node->formalParameters->size(); i < im; ++i)
+				{
+					scope->addScopeMember(node->formalParameters->at(i));
+					unit->opensScope->removeScopeMember(node->formalParameters->at(i));
+				}
+			}
+			//
+			// subscopes
+			if(unit->opensScope->childScope)
+			{
+				if(node->body)
+				{
+					if(((BlockStatement *)node->body)->opensScope)
+					{
+						scope->addChildScope(((BlockStatement *)node->body)->opensScope);
+						unit->opensScope->removeChildScope(((BlockStatement *)node->body)->opensScope);
+					}
+				}
+			}
+			//
+			node->opensScope = scope;
+			unit->opensScope->addChildScope(scope);
+			unit->opensScope->addScopeMember(node);
+			$$ = node;
+			setLoc(node, node->identifierName->locFirst, node->body->locLast);
+		}
+	| decl_specifier_seq declarator function_body
+		{
+			pdebug(__LINE__);
+			//
+			FunctionDefinition *node = getFunctionDefinition($1);
+			node->body = (Statement *)$3;
+			//
+			FunctionDeclaration *tmp = (FunctionDeclaration *)$2;
+			node->declRef = tmp; tmp->defRef = node;
+			node->formalParameters = tmp->formalParameters;
+			node->identifierName = tmp->identifierName;
+			tmp->functionMemberAttributes = node->functionMemberAttributes;
+			tmp->type = node->type;
+			//
+			// declarations/definitions
+			FunctionScope *scope = new FunctionScope;
+			if(node->formalParameters)
+			{
+				for(size_t i = 0, im = node->formalParameters->size(); i < im; ++i)
+				{
+					scope->addScopeMember(node->formalParameters->at(i));
+					unit->opensScope->removeScopeMember(node->formalParameters->at(i));
+				}
+			}
+			//
+			// subscopes
+			if(unit->opensScope->childScope)
+			{
+				if(node->body)
+				{
+					if(((BlockStatement *)node->body)->opensScope)
+					{
+						scope->addChildScope(((BlockStatement *)node->body)->opensScope);
+						unit->opensScope->removeChildScope(((BlockStatement *)node->body)->opensScope);
+					}
+				}
+			}
+			//
+			node->opensScope = scope;
+			unit->opensScope->addChildScope(scope);
+			unit->opensScope->addScopeMember(node);
+			$$ = node;
+			setLoc(node, node->locFirst, node->body->locLast);
+		}
+	| declarator ctor_initializer function_body	{ pdebug(__LINE__); }
+	| decl_specifier_seq declarator ctor_initializer function_body	{ pdebug(__LINE__); }
+	| declarator function_try_block	{ pdebug(__LINE__); }
+	| decl_specifier_seq declarator function_try_block	{ pdebug(__LINE__); }
+	;
+
+function_body
+	: compound_statement	{ pdebug(__LINE__); }
+	;
+
+initializer
+	: OP_ASSIGN initializer_clause		{ pdebug(__LINE__); $$ = $2; }
+	| LPAR expression_list RPAR	{ pdebug(__LINE__); /*yyerror(unit, "Unsupported!"); YYABORT;*/ $$ = NULL; /* TODO: bison type error */ }
+	;
+
+initializer_clause
+	: assignment_expression	{ pdebug(__LINE__); }
+	| LVINCULUM initializer_list RVINCULUM	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| LVINCULUM initializer_list COMMA RVINCULUM	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| LVINCULUM RVINCULUM	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+initializer_list
+	: initializer_clause	{ pdebug(__LINE__); }
+	| initializer_list COMMA initializer_clause	{ pdebug(__LINE__); }
+	;
+
+class_name
+	: IDENTIFIER	{ pdebug(__LINE__); Name *node = new Name; node->nameString = $1->token; $$ = node; setLoc(node, $1); }
+	| template_id	{ pdebug(__LINE__); }
+	;
+
+class_specifier
+	: class_head RVINCULUM
+		{
+			pdebug(__LINE__);
+			//
+			Node helper($1);
+			if(helper == NodeId::AGGREGATE_TYPE_DEFINITION)
+			{
+				unit->opensScope->addScopeMember((AggregateTypeDefinition *)$1);
+			}
+			//
+			$$ = $1;
+			setLoc((GASTMSyntaxObject *)$$, ((GASTMSyntaxObject *)$1)->locFirst, $2);
+		}
+	| class_head member_specification RVINCULUM
+		{
+			pdebug(__LINE__);
+			//
+			Node helper($1);
+			AggregateType *type;
+			if(helper == NodeId::AGGREGATE_TYPE_DEFINITION)
+			{
+				type = ((AggregateTypeDefinition *)$1)->aggregateType;
+			}
+			else
+			{
+				type = (AggregateType *)$1;
+			}
+			type->members = (std::vector<DefinitionUnit *> *)$2;
+			//
+			// scope members
+			type->opensScope = new AggregateScope;
+			for(size_t i = 0, im = type->members->size(); i < im; ++i)
+			{
+				type->opensScope->addScopeMember(type->members->at(i));
+				unit->opensScope->removeScopeMember(type->members->at(i));
+			}
+			//
+			// scope children
+			if(unit->opensScope->childScope)
+			{
+				if(type->members)
+				{
+					Scope *tmpScope;
+					for(size_t i = 0, im = type->members->size(); i < im; ++i)
+					{
+						helper.setNode(type->members->at(i));
+						if(helper == NodeId::AGGREGATE_TYPE_DEFINITION)
+						{
+							tmpScope = ((AggregateTypeDefinition *)type->members->at(i))->aggregateType->opensScope;
+						}
+						else if(helper == NodeId::FUNCTION_DEFINITION)
+						{
+							tmpScope = ((FunctionDefinition *)type->members->at(i))->opensScope;
+						}
+						else
+						{
+							tmpScope = NULL;
+						}
+						// move scope from global to children
+						if(tmpScope)
+						{
+							type->opensScope->addChildScope(tmpScope);
+							unit->opensScope->removeChildScope(tmpScope);
+						}
+					}
+				}
+			}
+			//
+			// resolve colisions where identifier was undeclared before
+			if(ActualParsingUnit::colisions.size() > 0)
+			{
+//
+// TODO: identifier revolving (iherited methods, etc..)
+//printf("aaaaaaa: %d\n", ActualParsingUnit::colisions.size());
+//				for(size_t i = 0; i < ActualParsingUnit::colisions.size(); /*++i*/)
+//				{
+//printf("%s,", ((IdentifierReference *)((FunctionCallExpression *)ActualParsingUnit::colisions[i].second)->calledFunction)->name->nameString.c_str());
+					//ActualParsingUnit::colisions.erase(ActualParsingUnit::colisions.begin() + i);
+//					++i;
+//				}
+//				if(ActualParsingUnit::colisions.size() > 0)
+//				{
+//					yyerror(unit, "Semantic error: Undeclared identifier!", ActualParsingUnit::colisions[0].second->locFirst->startLine);
+//					YYABORT;
+//				}
+			}
+			//
+			helper.setNode($1);
+			if(helper == NodeId::AGGREGATE_TYPE_DEFINITION)
+			{
+				unit->opensScope->addScopeMember((AggregateTypeDefinition *)$1);
+			}
+			unit->opensScope->addChildScope(type->opensScope);
+			//
+			// set default access kind and parent node
+			if(type->members)
+			{
+				helper.setNode(type);
+				AccessKind *access = NULL;
+				if(helper == NodeId::CLASS_TYPE)
+				{
+					access = new Private;
+				}
+				else if(helper == NodeId::STRUCTURE_TYPE)
+				{
+					access = new Public;
+				}
+				//
+				for(size_t i = 0, im = type->members->size(); i < im; ++i)
+				{
+					// set parent node
+					type->members->at(i)->parent = $1;
+					//
+					// set default access type
+					if(((DeclarationOrDefinition *)type->members->at(i))->accessKind == NULL)
+						((DeclarationOrDefinition *)type->members->at(i))->accessKind = access;
+				}
+			}
+			//
+			$$ = $1;
+			setLoc((GASTMSyntaxObject *)$$, ((GASTMSyntaxObject *)$1)->locFirst, $3);
+		}
+	;
+
+class_head	/* don't need to set locLast, because this non-terminal is never last in statement - at least there is LVINCULUM - it's set in class_specifier non-terminal */
+	: class_key LVINCULUM	{ pdebug(__LINE__); $$ = $1; }
+	| class_key base_clause LVINCULUM
+		{
+			pdebug(__LINE__);
+			//
+			((ClassType *)$1)->derivesFrom = (std::vector<DerivesFrom *> *)$2;
+			//
+			$$ = $1;
+		}
+	| class_key IDENTIFIER LVINCULUM
+		{
+			pdebug(__LINE__);
+			//
+			AggregateTypeDefinition *node = new AggregateTypeDefinition;
+			node->aggregateType = (AggregateType *)$1;
+			node->name = new Name;
+			node->name->nameString = $2->token;
+			//
+			$$ = node;
+			setLoc(node, ((GASTMSyntaxObject *)$1)->locFirst);
+		}
+	| class_key IDENTIFIER base_clause LVINCULUM
+		{
+			pdebug(__LINE__);
+			//
+			AggregateTypeDefinition *node = new AggregateTypeDefinition;
+			node->aggregateType = (AggregateType *)$1;
+			node->name = new Name;
+			node->name->nameString = $2->token;
+			((ClassType *)$1)->derivesFrom = (std::vector<DerivesFrom *> *)$3;
+			//
+			$$ = node;
+			setLoc(node, ((GASTMSyntaxObject *)$1)->locFirst);
+		}
+	| class_key nested_name_specifier IDENTIFIER LVINCULUM	{ pdebug(__LINE__); }
+	| class_key nested_name_specifier IDENTIFIER base_clause LVINCULUM	{ pdebug(__LINE__); }
+	| class_key template_id LVINCULUM	{ pdebug(__LINE__); }
+	| class_key template_id base_clause LVINCULUM	{ pdebug(__LINE__); }
+	| class_key nested_name_specifier template_id LVINCULUM	{ pdebug(__LINE__); }
+	| class_key nested_name_specifier template_id base_clause LVINCULUM	{ pdebug(__LINE__); }
+	;
+
+class_key
+	: KW_CLASS	{ pdebug(__LINE__); ClassType *node = new ClassType; $$ = node; setLoc(node, $1); }
+	| KW_STRUCT	{ pdebug(__LINE__); StructureType *node = new StructureType; $$ = node; setLoc(node, $1); }
+	| KW_UNION	{ pdebug(__LINE__); UnionType *node = new UnionType; $$ = node; setLoc(node, $1); }
+	;
+
+member_specification
+	: member_declaration
+		{
+			pdebug(__LINE__);
+			//
+			$$ = new VECTYPE;
+			for(size_t i = 0, im = $1->size(); i < im; ++i)
+			{
+				$$->push_back($1->at(i));
+			}
+			$1->clear();
+			delete $1;
+		}
+	| member_declaration member_specification
+		{
+			pdebug(__LINE__);
+			//
+			for(size_t i = 0, im = $1->size(); i < im; ++i)
+			{
+				$2->push_back($1->at(i));
+			}
+			$1->clear();
+			delete $1;
+			$$ = $2;
+		}
+	| access_specifier COLON	{ pdebug(__LINE__); /* nothing happens... */ $$ = new VECTYPE; }
+	| access_specifier COLON member_specification
+		{
+			pdebug(__LINE__);
+			//
+			for(size_t i = 0, im = $3->size(); i < im; ++i)
+			{
+				if(((DeclarationOrDefinition *)$3->at(i))->accessKind == NULL)
+					((DeclarationOrDefinition *)$3->at(i))->accessKind = (AccessKind *)$1;
+			}
+			$$ = $3;
+		}
+	;
+
+member_declaration
+	: SEMICOLON	{ pdebug(__LINE__); $$ = NULL; }
+	| decl_specifier_seq SEMICOLON	%dprec 1
+		{
+			pdebug(__LINE__);
+			//
+			$$ = new VECTYPE;
+			VariableDeclaration *node = getVariableDeclaration($1);
+			if(node == NULL)
+			{
+				yyerror(unit, "Error: Illegal variable declaration!");
+				YYABORT;
+			}
+			$1->clear();
+			delete $1;
+			$$->push_back(node);
+		}
+	| member_declarator_list SEMICOLON	{ pdebug(__LINE__); $$ = $1; }
+	| decl_specifier_seq member_declarator_list SEMICOLON	%dprec 2
+		{
+			pdebug(__LINE__);
+			//
+			Node helper;
+			for(size_t i = 0, im = $2->size(); i < im; ++i)
+			{
+				helper.setNode($2->at(i));
+				if(helper == NodeId::VARIABLE_DECLARATION)
+				{
+					if(getVariableDeclaration($1, (VariableDeclaration *)$2->at(i)) == NULL)
+					{
+						yyerror(unit, "Error: Illegal variable declaration!");
+						YYABORT;
+					}
+				}
+				else if(helper == NodeId::VARIABLE_DEFINITION)
+				{
+					if(getVariableDefinition($1, (VariableDefinition *)$2->at(i)) == NULL)
+					{
+						yyerror(unit, "Error: Illegal variable declaration!");
+						YYABORT;
+					}
+				}
+				else if(helper == NodeId::FUNCTION_DECLARATION)
+				{
+					FunctionDeclaration *fnDecl = (FunctionDeclaration *)$2->at(i);
+					if(getFunctionDeclaration($1, fnDecl) == NULL)
+					{
+						yyerror(unit, "Error: Illegal variable declaration!");
+						YYABORT;
+					}
+					// remove parameters from scope - it was added only for function definition
+					if(fnDecl->formalParameters)
+					{
+						for(size_t i = 0, im = fnDecl->formalParameters->size(); i < im; ++i)
+						{
+							unit->opensScope->removeScopeMember(fnDecl->formalParameters->at(i));
+						}
+					}
+				}
+				else
+				{
+					yyerror(unit, "Semantic error: unexpected node!\n");
+					YYABORT;
+				}
+			}
+			$1->clear();
+			delete $1;
+			//
+			$$ = $2;
+		}
+	| function_definition	{ pdebug(__LINE__); $$ = new VECTYPE; $$->push_back($1); }
+	| function_definition SEMICOLON	{ pdebug(__LINE__); $$ = new VECTYPE; $$->push_back($1); }
+	| nested_name_specifier unqualified_id SEMICOLON	{ pdebug(__LINE__); }
+	| COLON_2X nested_name_specifier unqualified_id SEMICOLON	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| nested_name_specifier KW_TEMPLATE unqualified_id SEMICOLON	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| COLON_2X nested_name_specifier KW_TEMPLATE unqualified_id SEMICOLON	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| using_declaration	{ pdebug(__LINE__); $$ = NULL; yyerror(unit, "Unsupported!"); YYABORT; /* TODO: bison type error */ }
+	| template_declaration	{ pdebug(__LINE__); $$ = NULL; yyerror(unit, "Unsupported!"); YYABORT; /* TODO: bison type error */ }
+	;
+
+member_declarator_list
+	: member_declarator	{ pdebug(__LINE__); $$ = new VECTYPE; $$->push_back($1); }
+	| member_declarator_list COMMA member_declarator	{ pdebug(__LINE__); $1->push_back($3); $$ = $1; }
+	;
+
+member_declarator
+	: declarator
+		{
+			pdebug(__LINE__);
+			//
+			Node helper($1);
+			if(helper != NodeId::DECLARATION)
+			{
+				VariableDeclaration *node = new VariableDeclaration;
+				node->identifierName = (Name *)$1;
+				//
+				$$ = node;
+			}
+			else
+			{
+				$$ = $1;
+			}
+		}
+	| declarator constant_initializer
+		{
+			pdebug(__LINE__);
+			//
+			Node helper($1);
+			if(helper != NodeId::DECLARATION)
+			{
+				VariableDefinition *node = new VariableDefinition;
+				node->identifierName = (Name *)$1;
+				node->initialValue = (Expression *)$2;
+				//
+				$$ = node;
+			}
+			else
+			{
+				$$ = $1;
+			}
+		}
+	| COLON constant_expression	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| IDENTIFIER COLON constant_expression	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+constant_initializer
+	: OP_ASSIGN constant_expression	{ pdebug(__LINE__); $$ = $2; }
+	;
+
+base_clause
+	: COLON base_specifier_list	{ pdebug(__LINE__); $$ = $2; }
+	;
+
+base_specifier_list
+	: base_specifier	{ pdebug(__LINE__); $$ = new VECTYPE; $$->push_back($1); }
+	| base_specifier_list COMMA base_specifier	{ pdebug(__LINE__); $1->push_back($3); $$ = $1; }
+	;
+
+base_specifier
+	: class_name
+		{
+			pdebug(__LINE__);
+			//
+			DerivesFrom *node = new DerivesFrom;
+			node->className = new NamedType;
+			DefinitionUnit *ref = getDeclOrDefnByName(((Name *)$1)->nameString, unit->opensScope);
+			if(!ref)
+			{
+				yyerror(unit, std::string("Semantic error: Undeclared identifier \"" + ((Name *)$1)->nameString + "\"!").c_str());
+				YYABORT;
+			}
+			Node helper(ref);
+			if(helper == NodeId::AGGREGATE_TYPE_DEFINITION)
+			{
+				node->className->body = ((AggregateTypeDefinition *)ref)->aggregateType;
+			}
+			//
+			$$ = node;
+			setLoc(node, ((GASTMSyntaxObject *)$1)->locFirst, ((GASTMSyntaxObject *)$1)->locLast);
+		}
+	| COLON_2X class_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| nested_name_specifier class_name	{ pdebug(__LINE__); }
+	| COLON_2X nested_name_specifier class_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_VIRTUAL class_name
+		{
+			pdebug(__LINE__);
+			//
+			DerivesFrom *node = new DerivesFrom;
+			node->isVirtual = true;
+			node->className = new NamedType;
+			DefinitionUnit *ref = getDeclOrDefnByName(((Name *)$2)->nameString, unit->opensScope);
+			if(!ref)
+			{
+				yyerror(unit, std::string("Semantic error: Undeclared identifier \"" + ((Name *)$2)->nameString + "\"!").c_str());
+				YYABORT;
+			}
+			Node helper(ref);
+			if(helper == NodeId::AGGREGATE_TYPE_DEFINITION)
+			{
+				node->className->body = ((AggregateTypeDefinition *)ref)->aggregateType;
+			}
+			//
+			$$ = node;
+			setLoc(node, $1, ((GASTMSyntaxObject *)$2)->locLast);
+		}
+	| KW_VIRTUAL access_specifier class_name
+		{
+			pdebug(__LINE__);
+			//
+			DerivesFrom *node = new DerivesFrom;
+			node->isVirtual = true;
+			node->accessKind = (AccessKind *)$2;
+			node->className = new NamedType;
+			DefinitionUnit *ref = getDeclOrDefnByName(((Name *)$3)->nameString, unit->opensScope);
+			Node helper(ref);
+			if(!ref)
+			{
+				yyerror(unit, std::string("Semantic error: Undeclared identifier \"" + ((Name *)$3)->nameString + "\"!").c_str());
+				YYABORT;
+			}
+			if(helper == NodeId::AGGREGATE_TYPE_DEFINITION)
+			{
+				node->className->body = ((AggregateTypeDefinition *)ref)->aggregateType;
+			}
+			//
+			$$ = node;
+			setLoc(node, $1, ((GASTMSyntaxObject *)$3)->locLast);
+		}
+	| KW_VIRTUAL COLON_2X class_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_VIRTUAL access_specifier COLON_2X class_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_VIRTUAL nested_name_specifier class_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_VIRTUAL access_specifier nested_name_specifier class_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_VIRTUAL COLON_2X nested_name_specifier class_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_VIRTUAL access_specifier COLON_2X nested_name_specifier class_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| access_specifier class_name
+		{
+			pdebug(__LINE__);
+			//
+			DerivesFrom *node = new DerivesFrom;
+			node->accessKind = (AccessKind *)$1;
+			node->className = new NamedType;
+			DefinitionUnit *ref = getDeclOrDefnByName(((Name *)$2)->nameString, unit->opensScope);
+			if(!ref)
+			{
+				yyerror(unit, std::string("Semantic error: Undeclared identifier \"" + ((Name *)$2)->nameString + "\"!").c_str());
+				YYABORT;
+			}
+			Node helper(ref);
+			if(helper == NodeId::AGGREGATE_TYPE_DEFINITION)
+			{
+				node->className->body = ((AggregateTypeDefinition *)ref)->aggregateType;
+			}
+			//
+			$$ = node;
+			setLoc(node, ((GASTMSyntaxObject *)$1)->locFirst, ((GASTMSyntaxObject *)$2)->locLast);
+		}
+	| access_specifier KW_VIRTUAL class_name
+		{
+			pdebug(__LINE__);
+			//
+			DerivesFrom *node = new DerivesFrom;
+			node->accessKind = (AccessKind *)$1;
+			node->isVirtual = true;
+			node->className = new NamedType;
+			DefinitionUnit *ref = getDeclOrDefnByName(((Name *)$3)->nameString, unit->opensScope);
+			if(!ref)
+			{
+				yyerror(unit, std::string("Semantic error: Undeclared identifier \"" + ((Name *)$3)->nameString + "\"!").c_str());
+				YYABORT;
+			}
+			Node helper(ref);
+			if(helper == NodeId::AGGREGATE_TYPE_DEFINITION)
+			{
+				node->className->body = ((AggregateTypeDefinition *)ref)->aggregateType;
+			}
+			//
+			$$ = node;
+			setLoc(node, ((GASTMSyntaxObject *)$1)->locFirst, ((GASTMSyntaxObject *)$3)->locLast);
+		}
+	| access_specifier COLON_2X class_name	{ pdebug(__LINE__); }
+	| access_specifier KW_VIRTUAL COLON_2X class_name	{ pdebug(__LINE__); }
+	| access_specifier nested_name_specifier class_name	{ pdebug(__LINE__); }
+	| access_specifier KW_VIRTUAL nested_name_specifier class_name	{ pdebug(__LINE__); }
+	| access_specifier COLON_2X nested_name_specifier class_name	{ pdebug(__LINE__); }
+	| access_specifier KW_VIRTUAL COLON_2X nested_name_specifier class_name	{ pdebug(__LINE__); }
+	;
+
+access_specifier
+	: KW_PRIVATE	{ pdebug(__LINE__); Private *node = new Private; $$ = node; setLoc(node, $1); }
+	| KW_PROTECTED	{ pdebug(__LINE__); Protected *node = new Protected; $$ = node; setLoc(node, $1); }
+	| KW_PUBLIC		{ pdebug(__LINE__); Public *node = new Public; $$ = node; setLoc(node, $1); }
+	;
+
+conversion_function_id
+	: KW_OPERATOR conversion_type_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+conversion_type_id
+	: type_specifier_seq	{ pdebug(__LINE__); }
+	| type_specifier_seq conversion_declarator	{ pdebug(__LINE__); }
+	;
+
+conversion_declarator
+	: ptr_operator	{ pdebug(__LINE__); }
+	| ptr_operator conversion_declarator	{ pdebug(__LINE__); }
+	;
+
+ctor_initializer
+	: COLON mem_initializer_list	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+mem_initializer_list
+	: mem_initializer	{ pdebug(__LINE__); }
+	| mem_initializer COMMA mem_initializer_list	{ pdebug(__LINE__); }
+	;
+
+mem_initializer
+	: mem_initializer_id LPAR RPAR	{ pdebug(__LINE__); }
+	| mem_initializer_id LPAR expression_list RPAR	{ pdebug(__LINE__); }
+	;
+
+mem_initializer_id
+	: class_name	{ pdebug(__LINE__); }
+	| COLON_2X class_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| nested_name_specifier class_name	{ pdebug(__LINE__); }
+	| COLON_2X nested_name_specifier class_name	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+operator_function_id
+	: KW_OPERATOR overloadable_operator	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_OPERATOR overloadable_operator OP_LT OP_GT	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_OPERATOR overloadable_operator OP_LT template_argument_list OP_GT	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+overloadable_operator
+	: KW_NEW	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_DELETE	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_NEW SQ_LPAR SQ_RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_DELETE SQ_LPAR SQ_RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_ADD	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_SUB	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_STAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_DIV	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_MOD	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_XOR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_AMP	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_BIT_OR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_TILDA	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_LOG_NEG	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_ASSIGN	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_LT	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_GT	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_ASSIGN_ADD	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_ASSIGN_SUB	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_ASSIGN_MUL	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_ASSIGN_DIV	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_ASSIGN_MOD	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_ASSIGN_XOR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_ASSIGN_AND	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_ASSIGN_OR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_LSH	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_RSH	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_ASSIGN_RSH	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_ASSIGN_LSH	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_EQ	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_NE	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_LE	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_GE	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_LOG_AND	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_LOG_OR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_INC	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_DEC	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| COMMA	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_ARROW_STAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| OP_ARROW	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| LPAR RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| SQ_LPAR SQ_RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+template_declaration
+	: KW_TEMPLATE OP_LT template_parameter_list OP_GT declaration	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_EXPORT KW_TEMPLATE OP_LT template_parameter_list OP_GT declaration	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+template_parameter_list
+	: template_parameter	{ pdebug(__LINE__); }
+	| template_parameter_list COMMA template_parameter	{ pdebug(__LINE__); }
+	;
+
+template_parameter
+	: type_parameter	{ pdebug(__LINE__); }
+	| parameter_declaration	{ pdebug(__LINE__); }
+	;
+
+type_parameter
+	: KW_CLASS	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_CLASS IDENTIFIER	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_CLASS OP_ASSIGN type_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_CLASS IDENTIFIER OP_ASSIGN type_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME IDENTIFIER	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME OP_ASSIGN type_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TYPENAME IDENTIFIER OP_ASSIGN type_id	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TEMPLATE OP_LT template_parameter_list OP_GT KW_CLASS	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TEMPLATE OP_LT template_parameter_list OP_GT KW_CLASS IDENTIFIER	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TEMPLATE OP_LT template_parameter_list OP_GT KW_CLASS OP_ASSIGN id_expression	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_TEMPLATE OP_LT template_parameter_list OP_GT KW_CLASS IDENTIFIER OP_ASSIGN id_expression	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+template_id
+	: template_name OP_LT OP_GT	{ pdebug(__LINE__); }
+	| template_name OP_LT template_argument_list OP_GT	{ pdebug(__LINE__); }
+	;
+
+template_name
+	: IDENTIFIER	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+template_argument_list
+	: template_argument	{ pdebug(__LINE__); }
+	| template_argument_list COMMA template_argument	{ pdebug(__LINE__); }
+	;
+
+template_argument
+	: assignment_expression	{ pdebug(__LINE__); }
+	| type_id	{ pdebug(__LINE__); }
+	;
+
+explicit_instantiation
+	: KW_TEMPLATE declaration	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+explicit_specialization
+	: KW_TEMPLATE OP_LT OP_GT declaration	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+try_block
+	: KW_TRY compound_statement handler_seq
+		{
+			pdebug(__LINE__);
+			//
+			TryStatement *node = (TryStatement *)$3;
+			node->guardedStatement = (Statement *)$2;
+			//
+			$$ = node;
+			setLoc(node, $1, node->catchBlocks.at(node->catchBlocks.size() - 1)->locLast);
+		}
+	;
+
+function_try_block	/* $$ se da jako telo funkce */
+	: KW_TRY function_body handler_seq
+		{
+			pdebug(__LINE__);
+			//
+			TryStatement *node = (TryStatement *)$3;
+			node->guardedStatement = (Statement *)$2;
+			//
+			$$ = node;
+			setLoc(node, $1, node->catchBlocks.at(node->catchBlocks.size() - 1)->locLast);
+		}
+	| KW_TRY ctor_initializer function_body handler_seq		{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+handler_seq
+	: handler
+		{
+			pdebug(__LINE__);
+			//
+			TryStatement *node = new TryStatement;
+			node->catchBlocks.push_back((CatchBlock *)$1);
+			//
+			$$ = node;
+		}
+	| handler handler_seq
+		{
+			pdebug(__LINE__);
+			//
+			TryStatement *node = (TryStatement *)$2;
+			node->catchBlocks.push_back((CatchBlock *)$1);
+			//
+			$$ = node;
+		}
+	;
+
+handler
+	: KW_CATCH LPAR exception_declaration RPAR compound_statement
+		{
+			pdebug(__LINE__);
+			//
+			CatchBlock *node = new CatchBlock;
+			node->body = (Statement *)$5;
+			//
+			$$ = node;
+			setLoc(node, $1, node->body->locLast);
+		}
+	;
+
+exception_declaration
+	: type_specifier_seq declarator	{ pdebug(__LINE__); }
+	| type_specifier_seq abstract_declarator	{ pdebug(__LINE__); }
+	| type_specifier_seq	{ pdebug(__LINE__); }
+	| ELIS	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+throw_expression
+	: KW_THROW	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_THROW assignment_expression	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+exception_specification
+	: KW_THROW LPAR RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	| KW_THROW LPAR type_id_list RPAR	{ pdebug(__LINE__); yyerror(unit, "Unsupported!"); YYABORT; $$ = NULL; /* TODO: bison type error */ }
+	;
+
+type_id_list
+	: type_id	{ pdebug(__LINE__); }
+	| type_id_list COMMA type_id	{ pdebug(__LINE__); }
+	;
+
+%%
+
+#include "lex.yy.c"
+
+static void updateBlockScope(Statement *statm, BlockScope *scope, ProgramScope *unitScope)
+{
+	if(statm)
+	{
+		Node helper(statm);
+		if(helper == NodeId::DECLARATION_OR_DEFINITION_STATEMENT)
+		{
+			std::vector<DefinitionUnit *> *declsOrDefns = ((DeclarationOrDefinitionStatement *)statm)->declOrDefn;
+			if(declsOrDefns)
+			{
+				for(size_t i = 0, im = declsOrDefns->size(); i < im; ++i)
+				{
+					scope->addScopeMember(declsOrDefns->at(i));
+					unitScope->removeScopeMember(declsOrDefns->at(i));
+				}
+			}
+		}
+		else if(helper == NodeId::BLOCK_STATEMENT)
+		{
+			// subscopes
+			if(unitScope->childScope)
+			{
+				if(((BlockStatement *)statm)->opensScope)
+				{
+					scope->addChildScope(((BlockStatement *)statm)->opensScope);
+					unitScope->removeChildScope(((BlockStatement *)statm)->opensScope);
+				}
+			}
+		}
+	}
+}
+
+static inline void setLoc(GASTMSyntaxObject *node, SourceLocation *locFirst, SourceLocation *locLast)
+{
+	if(locFirst != NULL)
+	{
+		if(node->locFirst == NULL)
+		{
+			node->locFirst = locFirst;
+			locFirst->parent = node;
+		}
+		else
+		{
+			if((*locFirst) < (*(node->locFirst)))
+			{
+				node->locFirst = locFirst;
+				locFirst->parent = node;
+			}
+		}
+	}
+	//
+	if(locLast != NULL)
+	{
+		if(node->locLast == NULL)
+		{
+			node->locLast = locLast;
+			locLast->parent = node;
+		}
+		else
+		{
+			if((*locLast) > (*(node->locLast)))
+			{
+				node->locLast = locLast;
+				locLast->parent = node;
+			}
+		}
+	}
+	else
+	{
+		if(node->locLast == NULL)
+		{
+			node->locLast = locFirst;
+		}
+		else
+		{
+			if(locFirst != NULL)
+			{
+				if((*locFirst) > (*(node->locLast)))
+				{
+					node->locLast = locFirst;
+				}
+			}
+		}
+	}
+}
+
+static DefinitionUnit * getDeclOrDefnByName(const std::string &name, const Scope *scope)
+{
+	if(scope == NULL)
+		return NULL;
+	//
+	// decls or defns
+	if(scope->definitionObject)
+	{
+		Node helper;
+		for(size_t i = 0, im = scope->definitionObject->size(); i < im; ++i)
+		{
+			helper.setNode(scope->definitionObject->at(i));
+			if(helper == NodeId::DEFINITION)
+			{
+				//TODO:tohohle se zbavit a najit chybu, ktera to zpusobuje...soubor cdatabase.cpp
+				helper.setNode(((Definition *)scope->definitionObject->at(i))->identifierName);
+				if(helper == NodeId::NAME)
+				{
+					if(((Definition *)scope->definitionObject->at(i))->identifierName->nameString == name)
+					{
+						return scope->definitionObject->at(i);
+					}
+				}
+			}
+			else if(helper == NodeId::DECLARATION)
+			{
+				if(((Declaration *)scope->definitionObject->at(i))->identifierName->nameString == name)
+					return scope->definitionObject->at(i);
+			}
+			else if(helper == NodeId::TYPE_DEFINITION)
+			{
+				if(((TypeDefinition *)scope->definitionObject->at(i))->name->nameString == name)
+					return scope->definitionObject->at(i);
+			}
+			else if(helper == NodeId::LABEL_DEFINITION)
+			{
+				if(((LabelDefinition *)scope->definitionObject->at(i))->labelName->nameString == name)
+					return scope->definitionObject->at(i);
+			}
+			else if(helper == NodeId::NAME_SPACE_DEFINITION)
+			{
+				if(((NameSpaceDefinition *)scope->definitionObject->at(i))->nameSpace->nameString == name)
+					return scope->definitionObject->at(i);
+			}
+			else
+			{
+				return NULL;	// unknown type!
+			}
+		}
+	}
+	// parent scopes
+	return getDeclOrDefnByName(name, scope->parentScope);
+	// if there is not returned some value before then doesn't matter if function returns NULL or not
+	//
+	// children scopes are seeked only with scope specifier, not here
+}
+
+static VECTYPE * checkVector(VECTYPE *vec)
+{
+	for(VECTYPE::iterator it = vec->begin(); it != vec->end(); ++it)
+	{
+		if((*it) == NULL)
+		{
+			vec->erase(it);
+		}
+	}
+	//
+	return vec;
+}
+
+static int findNodeById(const VECTYPE *vec, int id, int start_index)
+{
+	if(vec == NULL) return -1;
+	//
+	Node helper;
+	for(size_t i = start_index; i < vec->size(); ++i)
+	{
+		if(!vec->at(i)) continue;
+		helper.setNode(vec->at(i));
+		if(helper == id)
+			return i;
+	}
+	//
+	return -1;
+}
+
+static VECTYPE * composePrimitiveType(VECTYPE *vec)
+{
+	if(vec == NULL) return NULL;
+	//
+	using namespace NodeId;
+	int index, index2;
+	// short int
+	index = findNodeById(vec, SHORT_INTEGER);
+	if(index >= 0)
+	{
+		index2 = findNodeById(vec, INTEGER);
+		if(index2 >= 0)
+		{
+			setLoc((GASTMSyntaxObject *)vec->at(index), ((GASTMSyntaxObject *)vec->at(index2))->locFirst, ((GASTMSyntaxObject *)vec->at(index2))->locLast);
+			vec->erase(vec->begin() + index2);
+		}
+	}
+	// long long
+	index = findNodeById(vec, LONG_INTEGER);
+	if(index >= 0)
+	{
+		index2 = findNodeById(vec, INTEGER);
+		if(index2 >= 0)
+		{
+			setLoc((GASTMSyntaxObject *)vec->at(index), ((GASTMSyntaxObject *)vec->at(index2))->locFirst, ((GASTMSyntaxObject *)vec->at(index2))->locLast);
+			vec->erase(vec->begin() + index2);
+		}
+		//
+		index2 = findNodeById(vec, LONG_INTEGER, index + 1);
+		if(index2 >= 0)
+		{
+			LongLong *node = new LongLong;
+			setLoc(node, ((PrimitiveType *)vec->at((index < index2) ? index : index2))->locFirst, ((PrimitiveType *)vec->at((index > index2) ? index : index2))->locLast);
+			//
+			// delete from behind
+			vec->erase(vec->begin() + index2);
+			vec->erase(vec->begin() + index);
+			// insert new
+			vec->push_back(node);
+		}
+	}
+	// long long int
+	index = findNodeById(vec, LONG_LONG);
+	if(index >= 0)
+	{
+		index2 = findNodeById(vec, INTEGER);
+		if(index2 >= 0)
+		{
+			setLoc((GASTMSyntaxObject *)vec->at(index), ((GASTMSyntaxObject *)vec->at(index2))->locFirst, ((GASTMSyntaxObject *)vec->at(index2))->locLast);
+			vec->erase(vec->begin() + index2);
+		}
+		// long long ... long !
+		index2 = findNodeById(vec, LONG_INTEGER);
+		if(index2 >= 0)
+		{
+			yyerror(NULL, "Error: Data type 'long long long' doesn't exists!\n");
+			return NULL;
+		}
+	}
+	//
+	return vec;
+}
+
+static VECTYPE * setTypeParameters(VECTYPE *vec)
+{
+	if(vec == NULL) return NULL;
+	//
+	using namespace NodeId;
+	Node helper;
+	for(VECTYPE::iterator it1 = vec->begin(); it1 != vec->end(); ++it1)
+	{
+		helper.setNode(*it1);
+		if(helper == PRIMITIVE_TYPE)
+		{
+			for(VECTYPE::iterator it2 = vec->begin(); it2 != vec->end(); ++it2)
+			{
+				helper.setNode(*it2);
+				if(helper == SOURCE_LOCATION)
+				{
+					if(((SourceLocation *)(*it2))->token == "signed")
+					{
+						((PrimitiveType *)(*it1))->isSigned = true;
+						it2 = vec->erase(it2);
+						//
+						setLoc((GASTMSyntaxObject *)(*it1), (SourceLocation *)(*it2), (SourceLocation *)(*it2));
+						continue;
+					}
+					else if(((SourceLocation *)(*it2))->token == "unsigned")
+					{
+						((PrimitiveType *)(*it1))->isSigned = false;
+						it2 = vec->erase(it2);
+						//
+						setLoc((GASTMSyntaxObject *)(*it1), (SourceLocation *)(*it2), (SourceLocation *)(*it2));
+						continue;
+					}
+					else if(((SourceLocation *)(*it2))->token == "const")
+					{
+						((PrimitiveType *)(*it1))->isConst = true;
+						it2 = vec->erase(it2);
+						//
+						setLoc((GASTMSyntaxObject *)(*it1), (SourceLocation *)(*it2), (SourceLocation *)(*it2));
+						continue;
+					}
+					else if(((SourceLocation *)(*it2))->token == "volatile")
+					{
+						((PrimitiveType *)(*it1))->isVolatile = true;
+						it2 = vec->erase(it2);
+						//
+						setLoc((GASTMSyntaxObject *)(*it1), (SourceLocation *)(*it2), (SourceLocation *)(*it2));
+						continue;
+					}
+				}
+			}
+			break;
+		}
+		else if(helper == TYPE)
+		{
+			for(VECTYPE::iterator it2 = vec->begin(); it2 != vec->end(); ++it2)
+			{
+				helper.setNode(*it2);
+				if(helper == SOURCE_LOCATION)
+				{
+					if(((SourceLocation *)(*it2))->token == "signed")
+					{
+						((PrimitiveType *)(*it1))->isSigned = true;
+						it2 = vec->erase(it2);
+						//
+						setLoc((GASTMSyntaxObject *)(*it1), (SourceLocation *)(*it2), (SourceLocation *)(*it2));
+						continue;
+					}
+					else if(((SourceLocation *)(*it2))->token == "unsigned")
+					{
+						((PrimitiveType *)(*it1))->isSigned = false;
+						it2 = vec->erase(it2);
+						//
+						setLoc((GASTMSyntaxObject *)(*it1), (SourceLocation *)(*it2), (SourceLocation *)(*it2));
+						continue;
+					}
+					else if(((SourceLocation *)(*it2))->token == "const")
+					{
+						((PrimitiveType *)(*it1))->isConst = true;
+						it2 = vec->erase(it2);
+						//
+						setLoc((GASTMSyntaxObject *)(*it1), (SourceLocation *)(*it2), (SourceLocation *)(*it2));
+						continue;
+					}
+					else if(((SourceLocation *)(*it2))->token == "volatile")
+					{
+						((PrimitiveType *)(*it1))->isVolatile = true;
+						it2 = vec->erase(it2);
+						//
+						setLoc((GASTMSyntaxObject *)(*it1), (SourceLocation *)(*it2), (SourceLocation *)(*it2));
+						continue;
+					}
+				}
+			}
+			break;
+		}
+	}
+	//
+	return vec;
+}
+
+static VariableDeclaration * getVariableDeclaration(VECTYPE *vec, VariableDeclaration *decl)
+{
+	vec = composePrimitiveType(vec);
+	vec = setTypeParameters(vec);
+	if(vec == NULL) return NULL;
+	//
+	using namespace NodeId;
+	Node helper;
+	if(decl == NULL)
+		decl = new VariableDeclaration;
+	//
+	for(size_t i = 0, im = vec->size(); i < im; ++i)
+	{
+		helper.setNode(vec->at(i));
+		if(helper == TYPE)
+		{
+			TypeReference *typeRef;
+			if(helper == NodeId::TYPE_REFERENCE)
+			{
+				typeRef = (TypeReference *)vec->at(i);
+			}
+			else
+			{
+				UnnamedTypeReference *tmp = new UnnamedTypeReference;
+				tmp->type = (Type *)vec->at(i);
+				setLoc(tmp, tmp->type->locFirst, tmp->type->locLast);
+				//
+				typeRef = tmp;
+			}
+			// check if variable is already declared as pointer type, then set type to pointer's base type
+			if(decl->type)
+				((PointerType *)((UnnamedTypeReference *)decl->type)->type)->baseType = typeRef;
+			else
+				decl->type = typeRef;
+			//
+			setLoc(decl, typeRef->locFirst, typeRef->locLast);
+		}
+		else if(helper == SOURCE_LOCATION)
+		{
+			SourceLocation *loc = (SourceLocation *)vec->at(i);
+			if(loc->token == "mutable")
+			{
+				decl->isMutable = true;
+				//
+				setLoc(decl, loc, loc);
+			}
+			else if(loc->token == "register")
+			{
+				decl->isRegister = true;
+				//
+				setLoc(decl, loc, loc);
+			}
+			else if(loc->token == "static")
+			{
+				if(decl->storageSpecifiers) delete decl->storageSpecifiers;
+				//
+				decl->storageSpecifiers = new Static;
+				//
+				setLoc(decl->storageSpecifiers, loc, loc);
+				setLoc(decl, loc, loc);
+			}
+			else if(loc->token == "extern")
+			{
+				if(decl->storageSpecifiers) delete decl->storageSpecifiers;
+				//
+				decl->storageSpecifiers = new External;
+				//
+				setLoc(decl->storageSpecifiers, loc, loc);
+				setLoc(decl, loc, loc);
+			}
+		}
+	}
+	//
+	return decl;
+}
+
+static VariableDefinition * getVariableDefinition(VECTYPE *vec, VariableDefinition *defn)
+{
+	checkVector(vec);
+	vec = composePrimitiveType(vec);
+	vec = setTypeParameters(vec);
+	if(vec == NULL) return NULL;
+	//
+	using namespace NodeId;
+	Node helper;
+	if(defn == NULL)
+		defn = new VariableDefinition;
+	//
+	for(size_t i = 0, im = vec->size(); i < im; ++i)
+	{
+		helper.setNode(vec->at(i));
+		if(helper == TYPE)
+		{
+			TypeReference *typeRef;
+			if(helper == NodeId::TYPE_REFERENCE)
+			{
+				typeRef = (TypeReference *)vec->at(i);
+			}
+			else
+			{
+				UnnamedTypeReference *tmp = new UnnamedTypeReference;
+				tmp->type = (Type *)vec->at(i);
+				setLoc(tmp, tmp->type->locFirst, tmp->type->locLast);
+				//
+				typeRef = tmp;
+			}
+			// check if variable is already declared as pointer type, then set type to pointer's base type
+			if(defn->type)
+				((PointerType *)((UnnamedTypeReference *)defn->type)->type)->baseType = typeRef;
+			else
+				defn->type = typeRef;
+			//
+			setLoc(defn, typeRef->locFirst, typeRef->locLast);
+		}
+		else if(helper == SOURCE_LOCATION)
+		{
+			SourceLocation *loc = (SourceLocation *)vec->at(i);
+			if(loc->token == "mutable")
+			{
+				defn->isMutable = true;
+				//
+				setLoc(defn, loc, loc);
+			}
+			else if(loc->token == "register")
+			{
+				defn->isRegister = true;
+				//
+				setLoc(defn, loc, loc);
+			}
+			else if(loc->token == "static")
+			{
+				if(defn->storageSpecifiers) delete defn->storageSpecifiers;
+				//
+				defn->storageSpecifiers = new Static;
+				//
+				setLoc(defn->storageSpecifiers, loc, loc);
+				setLoc(defn, loc, loc);
+			}
+			else if(loc->token == "extern")
+			{
+				if(defn->storageSpecifiers) delete defn->storageSpecifiers;
+				//
+				defn->storageSpecifiers = new External;
+				//
+				setLoc(defn->storageSpecifiers, loc, loc);
+				setLoc(defn, loc, loc);
+			}
+		}
+	}
+	//
+	return defn;
+}
+
+static FunctionDeclaration * getFunctionDeclaration(VECTYPE *vec, FunctionDeclaration *decl)
+{
+	checkVector(vec);
+	vec = composePrimitiveType(vec);
+	vec = setTypeParameters(vec);
+	if(vec == NULL) return NULL;
+	//
+	using namespace NodeId;
+	Node helper;
+	if(decl == NULL)
+		decl = new FunctionDeclaration;
+	//
+	for(size_t i = 0, im = vec->size(); i < im; ++i)
+	{
+		helper.setNode(vec->at(i));
+		if(helper == TYPE)
+		{
+			TypeReference *typeRef;
+			if(helper == NodeId::TYPE_REFERENCE)
+			{
+				typeRef = (TypeReference *)vec->at(i);
+			}
+			else
+			{
+				UnnamedTypeReference *tmp = new UnnamedTypeReference;
+				tmp->type = (Type *)vec->at(i);
+				setLoc(tmp, tmp->type->locFirst, tmp->type->locLast);
+				//
+				typeRef = tmp;
+			}
+			// check if function's return type is already declared as pointer type, then set type to pointer's base type
+			if(decl->type)
+				((PointerType *)((UnnamedTypeReference *)decl->type)->type)->baseType = typeRef;
+			else
+				decl->type = typeRef;
+			//
+			setLoc(decl, typeRef->locFirst, typeRef->locLast);
+		}
+		else if(helper == SOURCE_LOCATION)
+		{
+			SourceLocation *loc = (SourceLocation *)vec->at(i);
+			if(loc->token == "inline")
+			{
+				if(decl->functionMemberAttributes == NULL)
+					decl->functionMemberAttributes = new FunctionMemberAttributes;
+				//
+				decl->functionMemberAttributes->isInline = true;
+				//
+				setLoc(decl->functionMemberAttributes, loc, loc);
+			}
+			else if(loc->token == "friend")
+			{
+				if(decl->functionMemberAttributes == NULL)
+					decl->functionMemberAttributes = new FunctionMemberAttributes;
+				//
+				decl->functionMemberAttributes->isFriend = true;
+				//
+				setLoc(decl->functionMemberAttributes, loc, loc);
+			}
+			else if(loc->token == "virtual")
+			{
+				if(decl->functionMemberAttributes == NULL)
+					decl->functionMemberAttributes = new FunctionMemberAttributes;
+				//
+				decl->functionMemberAttributes->virtualSpecifier = new Virtual;
+				//
+				setLoc(decl->functionMemberAttributes->virtualSpecifier, loc, loc);
+				setLoc(decl->functionMemberAttributes, loc, loc);
+			}
+			else if(loc->token == "register")
+			{
+				decl->isRegister = true;
+				//
+				setLoc(decl, loc, loc);
+			}
+			else if(loc->token == "static")
+			{
+				if(decl->storageSpecifiers) delete decl->storageSpecifiers;
+				//
+				decl->storageSpecifiers = new Static;
+				//
+				setLoc(decl->storageSpecifiers, loc, loc);
+				setLoc(decl, loc, loc);
+			}
+			else if(loc->token == "extern")
+			{
+				if(decl->storageSpecifiers) delete decl->storageSpecifiers;
+				//
+				decl->storageSpecifiers = new External;
+				//
+				setLoc(decl->storageSpecifiers, loc, loc);
+				setLoc(decl, loc, loc);
+			}
+		}
+	}
+	//
+	return decl;
+}
+
+static FunctionDefinition * getFunctionDefinition(VECTYPE *vec, FunctionDefinition *defn)
+{
+	checkVector(vec);
+	vec = composePrimitiveType(vec);
+	vec = setTypeParameters(vec);
+	if(vec == NULL) return NULL;
+	//
+	using namespace NodeId;
+	Node helper;
+	if(defn == NULL)
+		defn = new FunctionDefinition;
+	//
+	for(size_t i = 0, im = vec->size(); i < im; ++i)
+	{
+		helper.setNode(vec->at(i));
+		if(helper == TYPE)
+		{
+			TypeReference *typeRef;
+			if(helper == NodeId::TYPE_REFERENCE)
+			{
+				typeRef = (TypeReference *)vec->at(i);
+			}
+			else
+			{
+				UnnamedTypeReference *tmp = new UnnamedTypeReference;
+				tmp->type = (Type *)vec->at(i);
+				setLoc(tmp, tmp->type->locFirst, tmp->type->locLast);
+				//
+				typeRef = tmp;
+			}
+			// check if function's return type is already declared as pointer type, then set type to pointer's base type
+			if(defn->type)
+				((PointerType *)((UnnamedTypeReference *)defn->type)->type)->baseType = typeRef;
+			else
+				defn->type = typeRef;
+			//
+			//
+			setLoc(defn, typeRef->locFirst, typeRef->locLast);
+		}
+		else if(helper == SOURCE_LOCATION)
+		{
+			SourceLocation *loc = (SourceLocation *)vec->at(i);
+			if(loc->token == "inline")
+			{
+				if(defn->functionMemberAttributes == NULL)
+					defn->functionMemberAttributes = new FunctionMemberAttributes;
+				//
+				defn->functionMemberAttributes->isInline = true;
+				//
+				setLoc(defn->functionMemberAttributes, loc, loc);
+			}
+			else if(loc->token == "friend")
+			{
+				if(defn->functionMemberAttributes == NULL)
+					defn->functionMemberAttributes = new FunctionMemberAttributes;
+				//
+				defn->functionMemberAttributes->isFriend = true;
+				//
+				setLoc(defn->functionMemberAttributes, loc, loc);
+			}
+			else if(loc->token == "virtual")
+			{
+				if(defn->functionMemberAttributes == NULL)
+					defn->functionMemberAttributes = new FunctionMemberAttributes;
+				//
+				defn->functionMemberAttributes->virtualSpecifier = new Virtual;
+				//
+				setLoc(defn->functionMemberAttributes->virtualSpecifier, loc, loc);
+				setLoc(defn->functionMemberAttributes, loc, loc);
+			}
+			else if(loc->token == "register")
+			{
+				defn->isRegister = true;
+				//
+				setLoc(defn, loc, loc);
+			}
+			else if(loc->token == "static")
+			{
+				if(defn->storageSpecifiers) delete defn->storageSpecifiers;
+				//
+				defn->storageSpecifiers = new Static;
+				//
+				setLoc(defn->storageSpecifiers, loc, loc);
+				setLoc(defn, loc, loc);
+			}
+			else if(loc->token == "extern")
+			{
+				if(defn->storageSpecifiers) delete defn->storageSpecifiers;
+				//
+				defn->storageSpecifiers = new External;
+				//
+				setLoc(defn->storageSpecifiers, loc, loc);
+				setLoc(defn, loc, loc);
+			}
+		}
+	}
+	//
+	return defn;
+}
+
+static FormalParameterDefinition * getFormalParameterDefinition(VECTYPE *vec, FormalParameterDefinition *defn)
+{
+	checkVector(vec);
+	vec = composePrimitiveType(vec);
+	vec = setTypeParameters(vec);
+	if(vec == NULL) return NULL;
+	//
+	using namespace NodeId;
+	Node helper;
+	if(defn == NULL)
+		defn = new FormalParameterDefinition;
+	//
+	for(size_t i = 0, im = vec->size(); i < im; ++i)
+	{
+		helper.setNode(vec->at(i));
+		if(helper == TYPE)
+		{
+			TypeReference *typeRef;
+			if(helper == NodeId::TYPE_REFERENCE)
+			{
+				typeRef = (TypeReference *)vec->at(i);
+			}
+			else
+			{
+				UnnamedTypeReference *tmp = new UnnamedTypeReference;
+				tmp->type = (Type *)vec->at(i);
+				setLoc(tmp, tmp->type->locFirst, tmp->type->locLast);
+				//
+				typeRef = tmp;
+			}
+			// check if parameter is already declared as pointer type, then set type to pointer's base type
+			if(defn->type)
+				((PointerType *)((UnnamedTypeReference *)defn->type)->type)->baseType = typeRef;
+			else
+				defn->type = typeRef;
+			//
+			//
+			setLoc(defn, typeRef->locFirst, typeRef->locLast);
+		}
+		else if(helper == SOURCE_LOCATION)
+		{
+			SourceLocation *loc = (SourceLocation *)vec->at(i);
+			if(loc->token == "mutable")
+			{
+				defn->isMutable = true;
+				//
+				setLoc(defn, loc, loc);
+			}
+			else if(loc->token == "register")
+			{
+				defn->isRegister = true;
+				//
+				setLoc(defn, loc, loc);
+			}
+			else if(loc->token == "static")
+			{
+				if(defn->storageSpecifiers) delete defn->storageSpecifiers;
+				//
+				defn->storageSpecifiers = new Static;
+				//
+				setLoc(defn->storageSpecifiers, loc, loc);
+				setLoc(defn, loc, loc);
+			}
+			else if(loc->token == "extern")
+			{
+				if(defn->storageSpecifiers) delete defn->storageSpecifiers;
+				//
+				defn->storageSpecifiers = new External;
+				//
+				setLoc(defn->storageSpecifiers, loc, loc);
+				setLoc(defn, loc, loc);
+			}
+		}
+	}
+	//
+	return defn;
+}
+
+int yyParseFile(const char *file, CompilationUnit *unit)
+{
+	yyin = fopen(file, "r");
+	if(yyin == NULL)
+	{
+		printf("Source file can't be opened!\n");
+		return 1;
+	}
+    int retval = yyparse(unit);
+	fclose(yyin);
+	//
+	return retval;
+}
+
+static void pdebug(int line)
+{
+#if YYDEBUG == 1
+	printf("L%d\n", line);
+#endif
+}
+
+static int yyerror(CompilationUnit *unit, const char *err, int line)
+{
+	fprintf(stderr, "L%d: %s\n", line, err);
+	//
+	//delete unit;
+    return yyabort;
+}
+
+static int yyerror(CompilationUnit *unit, const char *err)
+{
+	SourceLocation *token = unit->srcFile->firstToken;
+	while(token->next != NULL) token = token->next;
+	//
+    fprintf(stderr, "L%d: %s\n", token->startLine, err);
+	//
+	//delete unit;
+    return yyabort;
+}
+
+/* =================================== Merging ================================== */
+static GASTMObject * declIdMerge(YYSTYPE rule1, YYSTYPE rule2)
+{
+	static Node helper;
+	//
+	helper.setNode(rule1.node);
+	if(helper == NodeId::NAME)	// if it can't be referenced, it wasn't declared
+	{							// so it would be newly declared identifier and it can't be type name
+		//delete rule2.node;
+		return rule1.node;	// identifier
+	}
+	else if(helper == NodeId::IDENTIFIER_REFERENCE)
+	{
+		helper.setNode(((IdentifierReference *)rule1.node)->refersTo);
+		if(helper == NodeId::TYPE_DEFINITION)
+		{
+			//delete rule1.node;
+			return rule2.node;	// typeName
+		}
+		else
+		{
+			//delete rule2.node;
+			return rule1.node;	// identifier
+		}
+	}
+	else
+	{
+		//delete rule1.node;
+		return rule2.node;	// typeName
+	}
+}
+
+static GASTMObject * fnCallOrTypeCastMerge(YYSTYPE rule1, YYSTYPE rule2)
+{
+	static Node helper;
+	//
+	CompilationUnit *unit = ActualParsingUnit::getUnit();
+	if(unit == NULL)
+	{
+		throw("CompilationUnit == NULL");
+	}
+	//
+	// rule1 = typeCast
+	// rule2 = fnCall
+	//
+	FunctionCallExpression *fnCall = (FunctionCallExpression *)rule2.node;
+	IdentifierReference *idRef = (IdentifierReference *)fnCall->calledFunction;
+	DefinitionUnit *reference = NULL;
+	if(idRef)
+	{
+		helper.setNode(idRef);
+		if(helper == NodeId::IDENTIFIER_REFERENCE)
+		{
+			reference = getDeclOrDefnByName(idRef->name->nameString, unit->opensScope);
+		}
+		else if(helper == NodeId::NAME)
+		{
+			fnCall->calledFunction = new IdentifierReference;
+			((IdentifierReference *)fnCall->calledFunction)->name = (Name *)idRef;
+			idRef = (IdentifierReference *)fnCall->calledFunction;
+			//
+			reference = getDeclOrDefnByName(idRef->name->nameString, unit->opensScope);
+		}
+	}
+	//
+	if(reference)
+	{
+		helper.setNode(reference);
+		if((helper == NodeId::FUNCTION_DEFINITION) || (helper == NodeId::FUNCTION_DECLARATION))
+		{
+			//delete rule1.node;
+			//
+			idRef->refersTo = reference;
+			return fnCall;
+		}
+		else if(helper == NodeId::TYPE_DEFINITION)
+		{
+			//delete rule2.node;
+			return rule1.node;
+		}
+	}
+	//
+	ActualParsingUnit::colisions.push_back(std::make_pair((GASTMSyntaxObject *)rule1.node, (GASTMSyntaxObject *)rule2.node));
+	return rule2.node;	// fnCall, but it doesn't matter what will be returned
+}
+
+static GASTMObject * declExprMerge(YYSTYPE rule1, YYSTYPE rule2)
+{
+	static Node helper;
+	//
+	DeclarationOrDefinitionStatement *ds = (DeclarationOrDefinitionStatement *)rule1.node;
+	if(!ds->declOrDefn) return rule2.node;
+	if(ds->declOrDefn->size() == 0) return rule2.node;
+	if(!ds->declOrDefn->at(0)) return rule2.node;
+	helper.setNode(ds->declOrDefn->at(0));
+	if(helper == NodeId::VARIABLE_DECLARATION)
+	{
+		if(((VariableDeclaration *)ds->declOrDefn->at(0))->type)
+			return ds;
+	}
+	else if(helper == NodeId::VARIABLE_DEFINITION)
+	{
+		if(((VariableDefinition *)ds->declOrDefn->at(0))->type)
+			return ds;
+	}
+	//
+	return rule2.node;
+}
+
+static GASTMObject * classIdMerge(YYSTYPE rule1, YYSTYPE rule2)
+{
+	static Node helper;
+	CompilationUnit *unit = ActualParsingUnit::getUnit();
+	if(unit == NULL)
+	{
+		throw("CompilationUnit == NULL");
+	}
+	//
+	NamedTypeReference *ref = (NamedTypeReference *)rule1.node;
+	if(!ref->name) return rule2.node;
+	//
+	ref->aType = (TypeDefinition *)getDeclOrDefnByName(ref->name->nameString, unit->opensScope);
+	if(ref->aType)
+	{
+		helper.setNode(ref->aType);
+		if(helper == NodeId::AGGREGATE_TYPE_DEFINITION)
+		{
+			((NamedTypeReference *)rule2.node)->aType = ref->aType;
+			return rule2.node;	// ClassName
+		}
+	}
+	return rule1.node;	// Identifier
+}
+
+static GASTMObject * declExprStatmMerge(YYSTYPE rule1, YYSTYPE rule2)
+{
+	static Node helper;
+	CompilationUnit *unit = ActualParsingUnit::getUnit();
+	if(unit == NULL)
+	{
+		throw("CompilationUnit == NULL");
+	}
+	//
+	if(!rule2.node) return rule1.node;	// declaration statement
+	//
+	helper.setNode(rule2.node);
+	if(helper == NodeId::EXPRESSION_STATEMENT)
+	{
+		BinaryExpression *expr = (BinaryExpression *)((ExpressionStatement *)rule2.node)->expression;
+		helper.setNode(expr);
+		if(helper == NodeId::BINARY_EXPRESSION)
+		{
+			if(!expr->leftOperand) return rule1.node;	// declaration statement
+			//
+			helper.setNode(expr->leftOperand);
+			if(helper == NodeId::IDENTIFIER_REFERENCE)
+			{
+				IdentifierReference *ref = (IdentifierReference *)expr->leftOperand;
+				helper.setNode(ref->refersTo);
+				if(helper == NodeId::TYPE_DEFINITION)
+				{
+					return rule1.node;	// declaration statement
+				}
+			}
+		}
+		//
+		// Delete from scope
+		DeclarationOrDefinitionStatement *defStatm = (DeclarationOrDefinitionStatement *)rule1.node;
+		for(size_t i = 0, im = defStatm->declOrDefn->size(); i < im; ++i)
+		{
+			unit->opensScope->removeScopeMember(defStatm->declOrDefn->at(i));
+		}
+		return rule2.node;	// expression statement
+	}
+	else
+	{
+		return rule1.node;	// empty statement
+	}
+}
